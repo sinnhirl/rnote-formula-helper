@@ -1,0 +1,9 @@
+{
+  "hotkey": "ctrl+alt+m",
+  "clipboard_hotkey": "ctrl+alt+shift+m",
+  "quit_hotkey": "ctrl+alt+shift+q",
+  "ocr_engine": "pix2text",
+  "snip_method": "builtin",
+  "snip_timeout_s": 90,
+  "auto_copy": true
+}
