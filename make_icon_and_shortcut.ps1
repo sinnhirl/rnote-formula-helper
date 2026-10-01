@@ -1,5 +1,6 @@
-# Build icon.ico and create Desktop shortcut for Rnote Formula Helper (ASCII only script)
+# Build icon.ico and create the Desktop shortcut for Rnote Formula Helper (ASCII-only script)
 $ErrorActionPreference = "Continue"
+$base = $PSScriptRoot
 
 # ---- icon ----
 Add-Type -AssemblyName System.Drawing
@@ -26,25 +27,26 @@ $g.DrawString("fx", $font, [System.Drawing.Brushes]::White, $rect, $sf)
 $g.Dispose()
 $hicon = $bmp.GetHicon()
 $icon = [System.Drawing.Icon]::FromHandle($hicon)
-$fs = [System.IO.File]::Create("C:\rnote-ocr\icon.ico")
+$icoPath = Join-Path $base "icon.ico"
+$fs = [System.IO.File]::Create($icoPath)
 $icon.Save($fs)
 $fs.Close()
-Write-Output ("icon: " + (Test-Path "C:\rnote-ocr\icon.ico"))
+Write-Output ("icon: " + (Test-Path $icoPath))
 
 # ---- shortcut ----
-$pyw = "C:\rnote-ocr\.venv\Scripts\pythonw.exe"
+$pyw = Join-Path $base ".venv\Scripts\pythonw.exe"
 Write-Output ("pythonw: " + (Test-Path $pyw))
 if (Test-Path $pyw) {
-    $name = [System.IO.File]::ReadAllText("C:\rnote-ocr\shortcut_name.txt", [System.Text.Encoding]::UTF8).Trim()
+    $name = [System.IO.File]::ReadAllText((Join-Path $base "shortcut_name.txt"), [System.Text.Encoding]::UTF8).Trim()
     $desktop = [Environment]::GetFolderPath("Desktop")
     $lnk = Join-Path $desktop ($name + ".lnk")
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($lnk)
     $sc.TargetPath = $pyw
-    $sc.Arguments = '"C:\rnote-ocr\app.py"'
-    $sc.WorkingDirectory = "C:\rnote-ocr"
-    $sc.IconLocation = "C:\rnote-ocr\icon.ico"
-    $sc.Description = "Rnote formula helper"
+    $sc.Arguments = '"' + (Join-Path $base "app.py") + '"'
+    $sc.WorkingDirectory = $base
+    $sc.IconLocation = $icoPath
+    $sc.Description = "Rnote Formula Helper"
     $sc.Save()
     Write-Output ("shortcut: " + (Test-Path $lnk))
     Write-Output ("shortcut path: " + $lnk)
