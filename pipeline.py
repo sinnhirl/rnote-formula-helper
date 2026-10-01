@@ -110,12 +110,50 @@ def clean_latex(s: str) -> str:
 
 def _normalize_ocr(s: str) -> str:
     """修识别结果里常见的多余空格：'2 x+7=1 5' -> '2x+7=15'，'1 / 2' -> '1/2'，
-    '0. 5' -> '0.5'（小数点后的空格会让 latex2sympy2 解析失败，实测踩过）。"""
+    '0. 5' -> '0.5'，'0 , 75' -> '0.75'（这类小毛病会让 latex2sympy2 解析失败，实测踩过）。"""
     s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)        # 1 2 -> 12
     s = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", s)  # 0. 5 / 0 .5 -> 0.5
+    s = re.sub(r"(?<=\d)\s*,\s*(?=\d)", ".", s)   # 0 , 75 / 0,75 -> 0.75（逗号误识别成小数点）
     s = re.sub(r"(?<=\d)\s+(?=[a-zA-Z])", "", s)  # 2 x -> 2x
     s = re.sub(r"\s*/\s*", "/", s)                 # 1 / 2 -> 1/2
     return s.strip()
+
+
+# OCR 常把「跨两行写的一个公式」包成 matrix 环境，latex2sympy2 无法解析（实测踩过）。
+# 这里把这类多行环境拆平成单行：行分隔 \\ 和列分隔 & 换成空格，残留的 \begin/\end 清掉。
+_ENV_RE = re.compile(
+    r"\\begin\{(matrix|pmatrix|bmatrix|vmatrix|Vmatrix|smallmatrix|array|gathered"
+    r"|aligned|align\*?|split|cases|rcases)\}(.*?)\\end\{\1\}",
+    re.S,
+)
+
+
+def _flatten_latex_envs(s: str) -> str:
+    """把 \\begin{matrix}...\\end{matrix} 之类的多行环境拆平为单行表达式。"""
+    def _repl(m):
+        body = m.group(2).replace("\\\\", " ").replace("&", " ")
+        return " " + body + " "
+
+    s = _ENV_RE.sub(_repl, s)
+    s = re.sub(r"\\(?:begin|end)\{[A-Za-z*]+\}", " ", s)   # 只剩一半 \begin/\end 时兜底
+    s = s.replace("\\\\", " ")                             # 残留的行分隔
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _sanitize(s: str) -> str:
+    """OCR 入口统一清洗：拆平多行环境 + 空格规整（OCR 与解析两个入口都走这里，双保险）。"""
+    return _normalize_ocr(_flatten_latex_envs(s))
+
+
+def _balance_parens(s: str):
+    """括号不配对时尝试补齐（OCR 常漏掉大写"()"）。返回修正串；本来就平衡则返回 None。"""
+    d = s.count("(") - s.count(")")
+    if d > 0:
+        return s + ")" * d
+    if d < 0:
+        return "(" * (-d) + s
+    return None
 
 
 # 生成参数上限：防止空图/噪点触发"复读机"式乱生成（曾导致一次识别卡 50 秒）
@@ -144,7 +182,7 @@ def ocr_latex(img: Image.Image) -> str:
                 latex = out.get("text", "") if isinstance(out, dict) else str(out)
             else:
                 latex = get_tex_model()(proc)
-            latex = _normalize_ocr(clean_latex(latex or ""))
+            latex = _sanitize(clean_latex(latex or ""))
             if latex:
                 if eng != primary:
                     log(f"主引擎 {primary} 没出结果，已用 {eng}")
@@ -164,7 +202,7 @@ _L2S = None
 def parse_latex(latex: str):
     import sympy as sp
 
-    s = _normalize_ocr(latex.strip().strip("$").strip())
+    s = _sanitize(latex.strip().strip("$").strip())
     s = s.rstrip("= ").strip()          # 末尾单独的等号（计算器习惯）
     global _L2S
     if _L2S is None:
@@ -183,11 +221,26 @@ def parse_latex(latex: str):
 
     try:
         return _call(s)
-    except Exception:
+    except Exception as e_orig:
+        last = e_orig
+        fixed = _balance_parens(s)      # OCR 常漏右括号：补齐后再试一次
+        if fixed is not None:
+            try:
+                return _call(fixed)
+            except Exception as e_bal:
+                last = e_bal
         if s.count("=") == 1:           # 解析库对等式偶发失败时手工拆分
             left, _, right = s.partition("=")
-            return sp.Eq(_call(left), _call(right))
-        raise
+            lb, rb = _balance_parens(left), _balance_parens(right)
+            if lb is not None:
+                left = lb
+            if rb is not None:
+                right = rb
+            try:
+                return sp.Eq(_call(left), _call(right))
+            except Exception as e_eq:
+                last = e_eq
+        raise last
 
 
 def _plain(expr) -> str:
@@ -219,10 +272,12 @@ def compute(latex: str) -> dict:
     import sympy as sp
 
     r = {"ok": False, "expr": None, "sym": None, "main_latex": None,
-         "main_text": None, "results": [], "error": None}
+         "main_text": None, "results": [], "error": None,
+         "error_kind": None, "error_detail": None}
     try:
         expr = parse_latex(latex)
     except Exception as e:
+        r["error_kind"], r["error_detail"] = "parse", str(e)
         r["error"] = f"公式已识别，但没法解析成算式（可点 WolframAlpha 复制过去算）：{e}"
         return r
     r["ok"] = True
@@ -322,6 +377,7 @@ def compute(latex: str) -> dict:
                     except Exception:
                         pass
     except Exception as e:
+        r["error_kind"], r["error_detail"] = "compute", str(e)
         r["error"] = f"计算失败：{e}"
         if not r["main_latex"]:
             r["main_latex"] = latex

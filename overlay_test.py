@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """自动化测试：内置框选流程。
-显示测试公式图 → 触发 Ctrl+Alt+M → 检测遮罩窗口 → 模拟拖框 → 验证弹窗出现。"""
+显示测试公式图 → 触发 Ctrl+Alt+Shift+M → 检测遮罩窗口 → 模拟拖框 → 验证弹窗出现。"""
 import ctypes
 import time
 from ctypes import wintypes
@@ -44,10 +44,11 @@ time.sleep(0.6)
 # 用慢速按键序列（之前验证过这种方式能触发全局热键；keyboard.send 整串组合不可靠）
 keyboard.press("ctrl"); time.sleep(0.08)
 keyboard.press("alt"); time.sleep(0.08)
+keyboard.press("shift"); time.sleep(0.08)
 keyboard.press("m"); time.sleep(0.3)
 keyboard.release("m")
-keyboard.release("alt"); keyboard.release("ctrl")
-print("[step] hotkey ctrl+alt+m sent")
+keyboard.release("shift"); keyboard.release("alt"); keyboard.release("ctrl")
+print("[step] hotkey ctrl+alt+shift+m sent")
 
 h = 0
 for _ in range(50):
@@ -73,7 +74,7 @@ print(f"[step] drag done: ({x0},{y0}) -> ({x1},{y1})")
 popup = 0
 for _ in range(60):
     time.sleep(0.1)
-    popup = u.FindWindowW(None, "公式助手")
+    popup = u.FindWindowW(None, "Rnote 公式助手")
     if popup:
         break
 print("[step] popup hwnd:", popup)
@@ -81,7 +82,7 @@ print("[step] popup hwnd:", popup)
 time.sleep(0.8)
 keyboard.send("esc")
 time.sleep(0.5)
-still = u.FindWindowW(None, "公式助手")
+still = u.FindWindowW(None, "Rnote 公式助手")
 if still:
     u.PostMessageW(still, 0x0010, None, None)   # WM_CLOSE 兜底
     time.sleep(0.3)

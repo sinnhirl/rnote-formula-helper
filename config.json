@@ -1,7 +1,8 @@
 {
-  "hotkey": "ctrl+alt+m",
-  "clipboard_hotkey": "ctrl+alt+shift+m",
+  "hotkey": "ctrl+alt+shift+m",
+  "clipboard_hotkey": "ctrl+alt+shift+c",
   "quit_hotkey": "ctrl+alt+shift+q",
+  "language": "zh",
   "ocr_engine": "pix2text",
   "snip_method": "builtin",
   "snip_timeout_s": 90,

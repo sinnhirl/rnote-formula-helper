@@ -48,6 +48,9 @@ def parse_cases():
         "x^2-1",
         "\\sin x = \\frac{1}{2}",
         "x+y=3",
+        "\\begin{matrix} x^{2} \\\\ +2x+1 \\end{matrix}",
+        "0 , 75 + 1",
+        "0.5 \\times( 4 \\times6+0.75^{2}+0.25^{2}",
     ]
     print("== 解析/计算层 ==")
     for latex in cases:
