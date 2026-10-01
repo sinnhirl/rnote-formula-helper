@@ -574,11 +574,11 @@ class HelperApp:
         self.q.put(("result", (img, latex, res)))
 
     def _quit(self):
-        try:
-            if self.tray:
-                self.tray.stop()
-        except Exception:
-            pass
+        if self.tray:
+            try:                                # 后台线程里停托盘，别把退出卡住（进程随后即退）
+                threading.Thread(target=self.tray.stop, daemon=True).start()
+            except Exception:
+                pass
         self.root.destroy()
 
     # ------------------------------------------------------------ 结果弹窗
@@ -1009,8 +1009,24 @@ def main():
     k32 = ctypes.windll.kernel32
     k32.CreateMutexW.restype = ctypes.c_void_p
     k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
-    k32.CreateMutexW(None, False, "RnoteOcrHelper_SingleInstance")
-    if k32.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+    def _acquire_mutex():
+        m = k32.CreateMutexW(None, False, "RnoteOcrHelper_SingleInstance")
+        if k32.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
+            k32.CloseHandle(m)             # 放掉本次句柄，免得旧实例退出后还被它"续命"
+            return None
+        return m
+
+    mutex = _acquire_mutex()
+    if mutex is None:
+        # 旧实例可能正在退出（解释器清理要几秒）——最多等 3 秒再下结论
+        for _ in range(6):
+            time.sleep(0.5)
+            mutex = _acquire_mutex()
+            if mutex is not None:
+                break
+    if mutex is None:
         log("已有实例在运行，本次启动退出")
         ctypes.windll.user32.MessageBoxW(
             None, t("already_running"), t("app_name"), 0x40)
@@ -1025,8 +1041,19 @@ def main():
     app.start_tray()
     try:
         app.run()
-    finally:
-        log("=== 退出 ===")
+    except Exception:
+        log("运行异常:\n" + traceback.format_exc())
+    log("=== 退出 ===")
+    try:
+        (BASE / ".pid").unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(0)      # torch/onnx 的解释器清理要 10 秒级；强制秒退，互斥锁立即释放，马上重启不被挡
 
 
 if __name__ == "__main__":
