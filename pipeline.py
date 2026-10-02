@@ -187,13 +187,11 @@ def _strip_stray_braces(s: str) -> str:
 
 
 def _strip_math_delims(s: str) -> str:
-    """剥掉显示数学包裹 \\[ ... \\] / \\( ... \\)（PaddleOCR-VL 输出会带）。"""
-    for a, b in (("\\[", "\\]"), ("\\(", "\\)")):
-        if s.startswith(a):
-            s = s[len(a):].strip()
-        if s.endswith(b):
-            s = s[:-len(b)].strip()
-    return s
+    """剥掉数学模式包裹符：\\[..\\] / \\(..\\) / $ / $$（PaddleOCR-VL 会带；
+    且可能出现在字符串中间——如换行被它拆成两段显示公式时，只在首尾剥是不够的）。"""
+    for t in ("$$", "\\[", "\\]", "\\(", "\\)", "$"):
+        s = s.replace(t, " ")
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _sanitize(s: str) -> str:
