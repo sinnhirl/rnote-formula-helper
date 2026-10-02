@@ -134,6 +134,13 @@ def _normalize_ocr(s: str) -> str:
     s = (s.replace("×", "\\times ").replace("÷", "\\div ")
           .replace("−", "-").replace("–", "-").replace("—", "-")
           .replace("⋅", "\\cdot "))
+    for _ch, _tx in (("₀", "_{0}"), ("₁", "_{1}"), ("₂", "_{2}"), ("₃", "_{3}"),
+                     ("₄", "_{4}"), ("₅", "_{5}"), ("₆", "_{6}"), ("₇", "_{7}"),
+                     ("₈", "_{8}"), ("₉", "_{9}"),
+                     ("⁰", "^{0}"), ("¹", "^{1}"), ("²", "^{2}"), ("³", "^{3}"),
+                     ("⁴", "^{4}"), ("⁵", "^{5}"), ("⁶", "^{6}"), ("⁷", "^{7}"),
+                     ("⁸", "^{8}"), ("⁹", "^{9}")):
+        s = s.replace(_ch, _tx)          # 模型偶发直接吐 Unicode 上下标字符
     s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)        # 1 2 -> 12
     s = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", s)  # 0. 5 / 0 .5 -> 0.5
     s = re.sub(r"(?<=\d)\s*,\s*(?=\d)", ".", s)   # 0 , 75 / 0,75 -> 0.75（逗号误识别成小数点）
@@ -209,6 +216,87 @@ def _balance_parens(s: str):
     return None
 
 
+# 括号求值记号 [E]_{a}^{b}（定积分手算的标准写法）。latex2sympy2 不认识它：
+# 会把上下限丢掉或整段读错（2026-10-01 用户实测：弹出的 3x(x-4)/4、5x(x-4)/4 就是这么来的）。
+# 解析前先把它转成 ((E@b)-(E@a))。
+_VAR_RE = re.compile(r"(?<![\\A-Za-z])([a-z])(?![A-Za-z])")
+
+
+def _bracket_var(body: str):
+    """找括号内容里唯一的单字母变量；找不到或有多个则不转换（返回 None）。"""
+    cands = sorted(set(_VAR_RE.findall(body)))
+    return cands[0] if len(cands) == 1 else None
+
+
+def _subst_var(body: str, var: str, val: str) -> str:
+    """把 body 里的变量换成分值；紧邻数字/括号处补 \\cdot 确保能解析。"""
+    def _r(m):
+        prev = m.string[m.start() - 1] if m.start() > 0 else ""
+        pre = "\\cdot " if (prev.isalnum() or prev in ")}]") else ""
+        return pre + "(" + val + ")"
+
+    return re.sub(r"(?<![\\A-Za-z])" + var + r"(?![A-Za-z])", _r, body)
+
+
+def _parse_limits(tail: str):
+    """解析紧跟在 ']' 后面的上下限：_{a}^{b} / ^{b}_{a}（顺序任意、允许空格）。
+    返回 (a, b, 消费字符数)；两个缺一不可，否则返回 None。"""
+    i, found = 0, {}
+    while i < len(tail):
+        c = tail[i]
+        if c in "_^":
+            if c in found:
+                break
+            i += 1
+            if i < len(tail) and tail[i] == "{":
+                j = tail.find("}", i)
+                if j < 0:
+                    return None
+                val, i = tail[i + 1:j], j + 1
+            else:
+                j = i
+                while j < len(tail) and (tail[j].isalnum() or tail[j] in ".-+"):
+                    j += 1
+                if j == i:
+                    return None
+                val, i = tail[i:j], j
+            found[c] = val
+        elif c == " ":
+            i += 1
+        else:
+            break
+    if "_" in found and "^" in found:
+        return found["_"], found["^"], i
+    return None
+
+
+def _eval_bracket_limits(s: str) -> str:
+    """把 [E]_{a}^{b} / [E]^{b}_{a} 转成 ((E@b)-(E@a))；无上下限的方括号保持原样。"""
+    s = re.sub(r"\\left(?=[\(\[\{\|\.])", "", s)
+    s = re.sub(r"\\right(?=[\)\]\}\|\.])", "", s)
+    out, i = [], 0
+    while True:
+        lb = s.find("[", i)
+        if lb < 0:
+            out.append(s[i:])
+            return "".join(out)
+        rb = s.find("]", lb + 1)
+        if rb < 0:
+            out.append(s[i:])
+            return "".join(out)
+        body = s[lb + 1:rb]
+        lim = _parse_limits(s[rb + 1:]) if "[" not in body else None
+        var = _bracket_var(body) if lim else None
+        if lim and var:
+            a, b, used = lim
+            out.append(s[i:lb])
+            out.append("((" + _subst_var(body, var, b) + ")-(" + _subst_var(body, var, a) + "))")
+            i = rb + 1 + used
+        else:
+            out.append(s[i:rb + 1])
+            i = rb + 1
+
+
 # 生成参数上限：防止空图/噪点触发"复读机"式乱生成（曾导致一次识别卡 50 秒）
 _P2T_REC = {"max_new_tokens": 256, "no_repeat_ngram_size": 8}
 
@@ -266,6 +354,7 @@ def parse_latex(latex: str):
 
     s = _sanitize(latex.strip().strip("$").strip())
     s = s.rstrip("= ").strip()          # 末尾单独的等号（计算器习惯）
+    s = _eval_bracket_limits(s)         # [E]_{a}^{b} 求值记号 → 代入求值（先于解析）
     global _L2S
     if _L2S is None:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

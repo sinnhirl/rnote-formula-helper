@@ -16,6 +16,7 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 - One-hotkey workflow: box-select the formula, get the answer
 - Works over any application (Rnote, OneNote, a PDF, a recorded lecture, ...)
 - Solves equations and evaluates expressions
+- Evaluates handwritten evaluation brackets with limits: `[½x²−2x]_{2}^{5}` is computed as F(5)−F(2) (the usual shorthand when finishing a definite integral / antiderivative evaluation)
 - Popup extras: solve / derivative / integral / simplify / factor / expand / numeric value
 - **Adjustable hotkeys** — record new ones right in the popup; takes effect immediately, no restart
 - **UI language: 中文 / English** — one click in the popup switches the whole interface
