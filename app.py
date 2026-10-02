@@ -1144,11 +1144,14 @@ class HelperApp:
         import pystray
 
         def _eng_item(key, label_key):
-            return pystray.MenuItem(
-                t(label_key),
-                (lambda k=key: self.q.put(("set_engine", k))),
-                checked=(lambda item=None, k=key: self.cfg.get("ocr_engine") == k),
-                radio=True)
+            # 注意 pystray 按签名分派：action 必须 0 参（1 参会被当 icon 传入！）；key 用闭包捕获
+            def _act():
+                self.q.put(("set_engine", key))
+
+            def _checked(item=None):
+                return self.cfg.get("ocr_engine") == key
+
+            return pystray.MenuItem(t(label_key), _act, checked=_checked, radio=True)
 
         engine_menu = pystray.Menu(
             _eng_item("pix2text", "eng_pix2text"),

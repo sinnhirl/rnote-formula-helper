@@ -6,4 +6,4 @@ __pycache__/
 
 # local scratch files (not for the public repo)
 _bench*
-_*.py
+_*
