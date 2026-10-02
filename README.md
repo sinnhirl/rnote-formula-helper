@@ -128,6 +128,8 @@ immediately). Other keys take effect after a restart.
 | `language` | `zh` | UI language: `zh` or `en` |
 | `ocr_engine` | `pix2text` | `pix2text`, `pix2tex`, or `paddleocr-vl` (needs a local llama.cpp server) |
 | `vl_server_urls` | `["http://127.0.0.1:8111", "http://127.0.0.1:8112"]` | PaddleOCR-VL server addresses to try, in order |
+| `vl_autostart` | `true` | launch the local PaddleOCR-VL server in the background on helper start (when the engine is `paddleocr-vl` and no server is up) |
+| `vl_stop_on_exit` | `true` | on quit, stop the server — only if the helper started it (a manually started server is left alone) |
 | `snip_method` | `builtin` | `builtin` = in-memory overlay; `ms-screenclip` = system screenshot tool (auto-saves files) |
 | `snip_timeout_s` | `90` | Overlay auto-cancel timeout, seconds |
 | `auto_copy` | `true` | Copy the main result to the clipboard automatically |

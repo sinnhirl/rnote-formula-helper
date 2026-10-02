@@ -31,6 +31,8 @@ DEFAULT_CFG = {
     "language": "zh",
     "ocr_engine": "pix2text",
     "vl_server_urls": ["http://127.0.0.1:8111", "http://127.0.0.1:8112"],
+    "vl_autostart": True,      # 引擎=VL 且服务不在线时，随助手启动自动拉起服务（隐藏窗口）
+    "vl_stop_on_exit": True,   # 退出时停掉由本助手拉起的服务（手动启动的服务不会动）
     "snip_method": "builtin",
     "snip_timeout_s": 90,
     "auto_copy": True,
@@ -440,11 +442,14 @@ class HelperApp:
         self._main_text = None
         self._snip_after_id = None
         self._edit_win = None
+        self._vl_spawned = False
         self.root = tk.Tk()
         self.root.withdraw()
         self._register_hotkeys()
         self.root.after(80, self._poll_queue)
         threading.Thread(target=self._preload, daemon=True).start()
+        if self.cfg.get("vl_autostart", True):
+            threading.Thread(target=self._ensure_vl_service, daemon=True).start()
 
     # ------------------------------------------------------------ 热键
     def _hotkey_fire(self, kind):
@@ -504,6 +509,52 @@ class HelperApp:
             log(f"预热完成 ({time.time() - t0:.1f}s)")
         except Exception:
             log("预热失败(不影响启动):\n" + traceback.format_exc())
+
+    # ------------------------------------------------------------ PaddleOCR-VL 服务联动
+    _VL_BAT = r"D:\PaddleOCR-VL\start_auto.bat"
+
+    def _ensure_vl_service(self):
+        """引擎=paddleocr-vl 且服务不在线时：后台隐藏拉起服务，并等待就绪。"""
+        if self.cfg.get("ocr_engine") != "paddleocr-vl":
+            return
+        try:
+            import vl_client
+        except Exception as e:
+            log(f"服务自动启动跳过（vl_client 导入失败: {e}）")
+            return
+        urls = self.cfg.get("vl_server_urls")
+        if vl_client.find_server(urls):
+            log("PaddleOCR-VL 服务已在运行")
+            return
+        if not os.path.exists(self._VL_BAT):
+            log(f"未找到 {self._VL_BAT}，跳过服务自动启动（识别将回退 pix2text）")
+            return
+        try:
+            import subprocess
+            subprocess.Popen(["cmd.exe", "/c", self._VL_BAT],
+                             creationflags=0x08000000)   # CREATE_NO_WINDOW
+            self._vl_spawned = True
+            log("已自动启动 PaddleOCR-VL 服务（后台加载中…）")
+        except Exception as e:
+            log(f"自动启动 PaddleOCR-VL 服务失败: {e}")
+            return
+        for _ in range(20):                              # 最多等约 40 秒
+            time.sleep(2)
+            if vl_client.find_server(urls):
+                log("PaddleOCR-VL 服务就绪")
+                return
+        log("PaddleOCR-VL 服务等待超时（首次识别将自动回退 pix2text）")
+
+    def _stop_vl_service(self):
+        """停掉『本助手拉起』的 PaddleOCR-VL 服务（只杀命令行含 PaddleOCR-VL 的 llama-server，
+        不影响其它 llama.cpp 服务）。异步执行，不挡退出。"""
+        import subprocess
+        ps = ("Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | "
+              "Where-Object { $_.CommandLine -like '*PaddleOCR-VL*' } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-Command", ps],
+                         creationflags=0x08000000)
+        log("已请求停止 PaddleOCR-VL 服务（随助手退出）")
 
     # ------------------------------------------------------------ 队列/线程
     def _poll_queue(self):
@@ -654,6 +705,11 @@ class HelperApp:
         self.q.put(("result", (img, latex, res)))
 
     def _quit(self):
+        if self._vl_spawned and self.cfg.get("vl_stop_on_exit", True):
+            try:                                # 停掉本助手拉起的识别服务（异步，不挡退出）
+                self._stop_vl_service()
+            except Exception:
+                log("停止 PaddleOCR-VL 服务时出错（忽略）")
         if self.tray:
             try:                                # 后台线程里停托盘，别把退出卡住（进程随后即退）
                 threading.Thread(target=self.tray.stop, daemon=True).start()
@@ -950,6 +1006,13 @@ class HelperApp:
                     api = vl_client.find_server(self.cfg.get("vl_server_urls"))
                 except Exception:
                     pass
+                if api is None and self.cfg.get("vl_autostart", True):
+                    self._ensure_vl_service()       # 不在线 → 自动拉起（含等待就绪）
+                    try:
+                        import vl_client
+                        api = vl_client.find_server(self.cfg.get("vl_server_urls"))
+                    except Exception:
+                        api = None
                 self.q.put(("engine_probe", api))
             threading.Thread(target=_probe, daemon=True).start()
         else:
