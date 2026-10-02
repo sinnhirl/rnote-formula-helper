@@ -20,7 +20,7 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 - **Adjustable hotkeys** — record new ones right in the popup; takes effect immediately, no restart
 - **UI language: 中文 / English** — one click in the popup switches the whole interface
 - **Fix and recalc** — if a character is misread, hit **Edit** in the popup (or tray → *Enter formula manually…*) to correct the formula and recompute on the spot
-- Two OCR engines with automatic fallback: `pix2text` (default, strong on handwriting) and `pix2tex`
+- Three OCR engines with automatic fallback: `pix2text` (default, strong on handwriting), `pix2tex`, and an optional local **PaddleOCR-VL** server (strongest; ~0.3 s/formula on a GPU). Switch engines from the tray menu
 - Built-in in-memory region select — no screenshot files, no clipboard-history pollution
 
 ## Examples
@@ -38,11 +38,13 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
    selection overlay. The image lives in memory only: nothing is written to
    disk and no system screenshot tool is invoked. `Esc` or right-click cancels
    the selection.
-2. **Recognize** — the selected region is preprocessed (auto-invert for dark
-   canvases, upscale, contrast) and recognized to LaTeX with `pix2text`
-   (MFR model, good with handwriting). CPU-only, roughly 0.2–0.5 s per
-   formula. `pix2tex` is available as a fallback engine and is used
-   automatically if the primary engine fails. Common OCR quirks are cleaned
+2. **Recognize** — the selected region is recognized to LaTeX. With the
+   default `pix2text` engine it is first preprocessed (auto-invert for dark
+   canvases, upscale, contrast) and runs on CPU in roughly 0.2–0.5 s per
+   formula. The optional `paddleocr-vl` engine sends the selection as-is to a
+   local llama.cpp server (~0.3 s on GPU, ~2 s on CPU). `pix2tex` remains a
+   fallback. Engines are tried in order; a failure moves on to the next one.
+   Common OCR quirks are cleaned
    up before parsing: multi-line formulas (an OCR-produced `matrix` block is
    flattened to one line), a missing closing parenthesis, `0 , 75` for
    `0.75`, dotted subscripts (`0_{.}75`), stray braces left by flattened
@@ -124,15 +126,33 @@ immediately). Other keys take effect after a restart.
 | `clipboard_hotkey` | `ctrl+alt+shift+c` | Recognize the clipboard image |
 | `quit_hotkey` | `ctrl+alt+shift+q` | Quit |
 | `language` | `zh` | UI language: `zh` or `en` |
-| `ocr_engine` | `pix2text` | `pix2text` (handwriting) or `pix2tex` |
+| `ocr_engine` | `pix2text` | `pix2text`, `pix2tex`, or `paddleocr-vl` (needs a local llama.cpp server) |
+| `vl_server_urls` | `["http://127.0.0.1:8111", "http://127.0.0.1:8112"]` | PaddleOCR-VL server addresses to try, in order |
 | `snip_method` | `builtin` | `builtin` = in-memory overlay; `ms-screenclip` = system screenshot tool (auto-saves files) |
 | `snip_timeout_s` | `90` | Overlay auto-cancel timeout, seconds |
 | `auto_copy` | `true` | Copy the main result to the clipboard automatically |
 
+## Optional: PaddleOCR-VL engine
+
+For the hardest handwriting, a local PaddleOCR-VL llama.cpp server can serve
+as the recognition engine:
+
+1. Start `llama-server` with the PaddleOCR-VL GGUF + `mmproj` (a GPU build is
+   fastest; a CPU build runs ~2 s/formula on a laptop).
+2. Tray icon → *OCR engine* → *PaddleOCR-VL*. A toast reports whether the
+   server is reachable.
+3. Recognition then posts the selection to `http://127.0.0.1:8111` (or
+   `:8112`); if no server is up, it falls back to `pix2text` automatically.
+
+The request format (image first, `OCR:` prompt, `temperature 0`) follows the
+official PaddleOCR pipeline client and is implemented in `vl_client.py` with
+no extra dependencies.
+
 ## Files
 
 - `app.py` — tray app: hotkeys, popup UI with hotkey/language settings, built-in snip overlay, single-instance guard
-- `pipeline.py` — preprocessing, OCR (pix2text / pix2tex), parsing, computation, rendering
+- `pipeline.py` — preprocessing, OCR (pix2text / pix2tex / paddleocr-vl), parsing, computation, rendering
+- `vl_client.py` — direct client for the optional PaddleOCR-VL llama.cpp server (stdlib only)
 - `selftest.py` — headless self-test: `python selftest.py parse|ocr|all`
 - `config.json` — hotkeys, language, OCR engine, snip method
 - `selftest_imgs/` — sample images used by the self-test

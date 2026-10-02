@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Rnote 公式助手 — 核心管道：图像预处理 / 手写公式识别(pix2text,备选pix2tex) / 计算(sympy)。
+"""Rnote 公式助手 — 核心管道：图像预处理 / 手写公式识别(pix2text、pix2tex、PaddleOCR-VL) / 计算(sympy)。
 
 供 app.py(界面) 与 selftest.py(测试) 共用；本模块不依赖 tkinter。
 """
@@ -9,6 +9,7 @@ import contextlib
 import io
 import re
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -55,10 +56,13 @@ def preprocess(img: Image.Image) -> Image.Image:
 
 
 # ---------------------------------------------------------------- 公式识别
-# 两个引擎：pix2text 的 mfr-1.5（默认，对手写更准、更快）；pix2tex（备选）。
-# config.json 里 "ocr_engine" 可切换；识别失败会自动换另一个引擎。
+# 三个引擎：pix2text 的 mfr-1.5（默认，快）；pix2tex（备选）；paddleocr-vl
+# （本地 PaddleOCR-VL 大模型，经 llama.cpp 服务直连，最准；需先启动
+# start_server.bat / start_server_cpu.bat，未在线时自动回退 pix2text）。
+# config.json 或托盘菜单里 "ocr_engine" 可切换；识别失败会自动换下一个引擎。
 _tex_model = None
 _p2t_model = None
+_model_lock = threading.Lock()
 
 
 def _cfg() -> dict:
@@ -72,27 +76,42 @@ def _cfg() -> dict:
 def get_tex_model():
     global _tex_model
     if _tex_model is None:
-        from pix2tex.cli import LatexOCR
-        t0 = time.time()
-        _tex_model = LatexOCR()
-        log(f"pix2tex 模型加载完成 ({time.time() - t0:.1f}s)")
+        with _model_lock:
+            if _tex_model is None:
+                from pix2tex.cli import LatexOCR
+                t0 = time.time()
+                _tex_model = LatexOCR()
+                log(f"pix2tex 模型加载完成 ({time.time() - t0:.1f}s)")
     return _tex_model
 
 
 def get_p2t_model():
     global _p2t_model
     if _p2t_model is None:
-        from pix2text.latex_ocr import LatexOCR as P2TLatexOCR
-        t0 = time.time()
-        _p2t_model = P2TLatexOCR()
-        log(f"pix2text(mfr) 模型加载完成 ({time.time() - t0:.1f}s)")
+        with _model_lock:
+            if _p2t_model is None:
+                from pix2text.latex_ocr import LatexOCR as P2TLatexOCR
+                t0 = time.time()
+                _p2t_model = P2TLatexOCR()
+                log(f"pix2text(mfr) 模型加载完成 ({time.time() - t0:.1f}s)")
     return _p2t_model
 
 
 def warmup(engine: str | None = None):
     """预加载识别模型（供界面启动时调用，避免第一次识别等太久）。"""
     eng = engine or _cfg().get("ocr_engine", "pix2text")
-    if eng == "pix2tex":
+    if eng == "paddleocr-vl":
+        try:
+            import vl_client
+            api = vl_client.find_server(_cfg().get("vl_server_urls"))
+            if api:
+                log(f"PaddleOCR-VL 服务在线: {api}")
+            else:
+                log("PaddleOCR-VL 服务未启动（运行 start_server.bat / start_server_cpu.bat）；"
+                    "识别时会自动回退 pix2text")
+        except Exception as e:
+            log(f"PaddleOCR-VL 服务探测失败: {e}")
+    elif eng == "pix2tex":
         get_tex_model()
     else:
         get_p2t_model()
@@ -110,14 +129,18 @@ def clean_latex(s: str) -> str:
 
 def _normalize_ocr(s: str) -> str:
     """修识别结果里常见的多余空格：'2 x+7=1 5' -> '2x+7=15'，'1 / 2' -> '1/2'，
-    '0. 5' -> '0.5'，'0 , 75' -> '0.75'（这类小毛病会让 latex2sympy2 解析失败，实测踩过）。"""
+    '0. 5' -> '0.5'，'0 , 75' -> '0.75'（这类小毛病会让 latex2sympy2 解析失败，实测踩过）。
+    顺带把全角/Unicode 运算符换成 LaTeX（PaddleOCR-VL 会直接输出 × 这类字符）。"""
+    s = (s.replace("×", "\\times ").replace("÷", "\\div ")
+          .replace("−", "-").replace("–", "-").replace("—", "-")
+          .replace("⋅", "\\cdot "))
     s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)        # 1 2 -> 12
     s = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", s)  # 0. 5 / 0 .5 -> 0.5
     s = re.sub(r"(?<=\d)\s*,\s*(?=\d)", ".", s)   # 0 , 75 / 0,75 -> 0.75（逗号误识别成小数点）
     s = re.sub(r"(?<=\d)\s*_\{[.,]\}\s*(?=\d)", ".", s)  # 0_{.}75 / 0_{,} 75 -> 0.75（小数点被识成下标）
     s = re.sub(r"(?<=\d)\s+(?=[a-zA-Z])", "", s)  # 2 x -> 2x
     s = re.sub(r"\s*/\s*", "/", s)                 # 1 / 2 -> 1/2
-    return s.strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 # OCR 常把「跨两行写的一个公式」包成 matrix 环境，latex2sympy2 无法解析（实测踩过）。
@@ -163,9 +186,19 @@ def _strip_stray_braces(s: str) -> str:
     return t
 
 
+def _strip_math_delims(s: str) -> str:
+    """剥掉显示数学包裹 \\[ ... \\] / \\( ... \\)（PaddleOCR-VL 输出会带）。"""
+    for a, b in (("\\[", "\\]"), ("\\(", "\\)")):
+        if s.startswith(a):
+            s = s[len(a):].strip()
+        if s.endswith(b):
+            s = s[:-len(b)].strip()
+    return s
+
+
 def _sanitize(s: str) -> str:
     """OCR 入口统一清洗：拆平多行环境 + 清孤立括号 + 空格规整（OCR 与解析两个入口都走这里，双保险）。"""
-    return _normalize_ocr(_strip_stray_braces(_flatten_latex_envs(s)))
+    return _normalize_ocr(_strip_stray_braces(_flatten_latex_envs(_strip_math_delims(s))))
 
 
 def _balance_parens(s: str):
@@ -189,6 +222,13 @@ def _is_blank(img: Image.Image) -> bool:
     return bool(g.max() - g.min() < 25)
 
 
+def _vl_recognize(img: Image.Image) -> str:
+    """PaddleOCR-VL 直连识别：原图直送（实测深色底、原始配色识别很稳；任何裁剪/缩放
+    反而会扰动输出，服务端内部会做合适的缩放）。"""
+    import vl_client
+    return vl_client.recognize(img.convert("RGB"), _cfg().get("vl_server_urls"))
+
+
 def ocr_latex(img: Image.Image) -> str:
     """输入 PIL 图片，输出 LaTeX 字符串。"""
     proc = preprocess(img)
@@ -199,7 +239,9 @@ def ocr_latex(img: Image.Image) -> str:
     last_err = None
     for eng in [primary] + [e for e in ("pix2text", "pix2tex") if e != primary]:
         try:
-            if eng == "pix2text":
+            if eng == "paddleocr-vl":
+                latex = _vl_recognize(img)
+            elif eng == "pix2text":
                 out = get_p2t_model().recognize(proc, rec_config=_P2T_REC)
                 latex = out.get("text", "") if isinstance(out, dict) else str(out)
             else:

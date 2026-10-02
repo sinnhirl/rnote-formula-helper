@@ -30,6 +30,7 @@ DEFAULT_CFG = {
     "quit_hotkey": "ctrl+alt+shift+q",
     "language": "zh",
     "ocr_engine": "pix2text",
+    "vl_server_urls": ["http://127.0.0.1:8111", "http://127.0.0.1:8112"],
     "snip_method": "builtin",
     "snip_timeout_s": 90,
     "auto_copy": True,
@@ -87,6 +88,12 @@ STRINGS = {
         "tray_clip": "识别剪贴板图片",
         "tray_manual": "手动输入公式…",
         "tray_hotkeys": "快捷键设置…",
+        "tray_engine": "识别引擎",
+        "eng_pix2text": "pix2text（快速 · 内置）",
+        "eng_vl": "PaddleOCR-VL（本地大模型）",
+        "eng_switched_p2t": "已切换：pix2text",
+        "eng_vl_ok": "已切换：PaddleOCR-VL · 服务在线 ✓",
+        "eng_vl_down": "已切换：PaddleOCR-VL · 未检测到服务（将自动回退 pix2text；请先运行 start_server.bat 或 _cpu.bat）",
         "tray_language": "语言：切换中/英",
         "tray_quit": "退出",
         "hk_title": "快捷键设置",
@@ -145,6 +152,12 @@ STRINGS = {
         "tray_clip": "Recognize clipboard image",
         "tray_manual": "Enter formula manually…",
         "tray_hotkeys": "Hotkey settings…",
+        "tray_engine": "OCR engine",
+        "eng_pix2text": "pix2text (fast, built-in)",
+        "eng_vl": "PaddleOCR-VL (local, accurate)",
+        "eng_switched_p2t": "Switched to: pix2text",
+        "eng_vl_ok": "Switched to: PaddleOCR-VL · service online ✓",
+        "eng_vl_down": "Switched to: PaddleOCR-VL · service not found (falls back to pix2text; start start_server.bat or _cpu.bat first)",
         "tray_language": "Language: 中文 / English",
         "tray_quit": "Quit",
         "hk_title": "Hotkey settings",
@@ -518,6 +531,13 @@ class HelperApp:
                     self._open_hotkey_settings()
                 elif kind == "toggle_lang":
                     self._on_toggle_language()
+                elif kind == "set_engine":
+                    self._set_engine(msg[1])
+                elif kind == "engine_probe":
+                    if msg[1]:
+                        self._toast(t("eng_vl_ok"), bg="#25452f", fg="#c9f7cf", ms=3600)
+                    else:
+                        self._toast(t("eng_vl_down"), bg="#4a2530", fg="#ffcfc8", ms=5200)
                 elif kind == "quit":
                     self._cancel_pending_snip()
                     self._quit()
@@ -916,6 +936,26 @@ class HelperApp:
             self._show_result(None, self._cur_latex, self._cur_res, autocopy=False)
         self._toast(t("lang_switched"), ms=1800)
 
+    def _set_engine(self, eng):
+        """托盘切换识别引擎：写回 config.json；切到 VL 时后台探测服务并提示结果。"""
+        self.cfg["ocr_engine"] = eng
+        save_cfg(self.cfg)
+        self._refresh_tray_menu()
+        log(f"识别引擎切换为: {eng}")
+        if eng == "paddleocr-vl":
+            def _probe():
+                api = None
+                try:
+                    import vl_client
+                    api = vl_client.find_server(self.cfg.get("vl_server_urls"))
+                except Exception:
+                    pass
+                self.q.put(("engine_probe", api))
+            threading.Thread(target=_probe, daemon=True).start()
+        else:
+            self._toast(t("eng_switched_p2t"), ms=2200)
+            threading.Thread(target=lambda: pipeline.warmup(eng), daemon=True).start()
+
     def _open_hotkey_settings(self):
         if self._hk_win is not None and self._hk_win.winfo_exists():
             self._hk_win.lift()
@@ -1102,11 +1142,24 @@ class HelperApp:
     # ------------------------------------------------------------ 托盘
     def _build_tray_menu(self):
         import pystray
+
+        def _eng_item(key, label_key):
+            return pystray.MenuItem(
+                t(label_key),
+                (lambda k=key: self.q.put(("set_engine", k))),
+                checked=(lambda item=None, k=key: self.cfg.get("ocr_engine") == k),
+                radio=True)
+
+        engine_menu = pystray.Menu(
+            _eng_item("pix2text", "eng_pix2text"),
+            _eng_item("paddleocr-vl", "eng_vl"),
+        )
         return pystray.Menu(
             pystray.MenuItem(t("tray_snip"), lambda: self.q.put(("snip",))),
             pystray.MenuItem(t("tray_clip"), lambda: self.q.put(("clip",))),
             pystray.MenuItem(t("tray_manual"), lambda: self.q.put(("manual",))),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(t("tray_engine"), engine_menu),
             pystray.MenuItem(t("tray_hotkeys"), lambda: self.q.put(("open_hk",))),
             pystray.MenuItem(t("tray_language"), lambda: self.q.put(("toggle_lang",))),
             pystray.Menu.SEPARATOR,
