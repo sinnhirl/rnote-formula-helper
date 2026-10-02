@@ -297,6 +297,19 @@ def _eval_bracket_limits(s: str) -> str:
             i = rb + 1
 
 
+# 「上下限模式」（弹窗勾选框，默认关）：VL 把括号角叠写的上下限误读成 ]\frac{5}{2} 或 ]0^{2} 时，
+# 还原成标准记号，交给 _eval_bracket_limits 求值；不勾选则保持原义（作乘式）。
+_STACK_FRAC_RE = re.compile(
+    r"\]\s*\\frac\s*\{\s*([+\-]?\d+(?:\.\d+)?)\s*\}\s*\{\s*([+\-]?\d+(?:\.\d+)?)\s*\}")
+_STACK_SUP_RE = re.compile(r"\]\s*(\d+(?:\.\d+)?)\s*\^\s*\{\s*(\d+(?:\.\d+)?)\s*\}")
+
+
+def _stacked_as_limits(s: str) -> str:
+    """]\\frac{上}{下} → ]_{下}^{上}；]下^{上} → ]_{下}^{上}（如 ]\\frac{5}{2} → ]_{2}^{5}）。"""
+    s = _STACK_FRAC_RE.sub(r"]_{\2}^{\1}", s)
+    return _STACK_SUP_RE.sub(r"]_{\1}^{\2}", s)
+
+
 # 生成参数上限：防止空图/噪点触发"复读机"式乱生成（曾导致一次识别卡 50 秒）
 _P2T_REC = {"max_new_tokens": 256, "no_repeat_ngram_size": 8}
 
@@ -349,11 +362,13 @@ def ocr_latex(img: Image.Image) -> str:
 _L2S = None
 
 
-def parse_latex(latex: str):
+def parse_latex(latex: str, fix_limits: bool = False):
     import sympy as sp
 
     s = _sanitize(latex.strip().strip("$").strip())
     s = s.rstrip("= ").strip()          # 末尾单独的等号（计算器习惯）
+    if fix_limits:
+        s = _stacked_as_limits(s)       # 勾「上下限」：]\frac{5}{2} / ]0^{2} → ]_{2}^{5} / ]_{0}^{2}
     s = _eval_bracket_limits(s)         # [E]_{a}^{b} 求值记号 → 代入求值（先于解析）
     global _L2S
     if _L2S is None:
@@ -416,9 +431,10 @@ def _fmt_solutions(sym, sols) -> tuple[str, str]:
     return lt, tt
 
 
-def compute(latex: str) -> dict:
+def compute(latex: str, fix_limits: bool = False) -> dict:
     """对识别结果做默认计算。
     返回 dict: ok / expr / sym / main_latex / main_text / results[(label,latex,text)] / error
+    fix_limits=True（弹窗勾选「上下限」）时，先把叠写数字还原成上下限记号再求值。
     """
     import sympy as sp
 
@@ -426,7 +442,7 @@ def compute(latex: str) -> dict:
          "main_text": None, "results": [], "error": None,
          "error_kind": None, "error_detail": None}
     try:
-        expr = parse_latex(latex)
+        expr = parse_latex(latex, fix_limits=fix_limits)
     except Exception as e:
         r["error_kind"], r["error_detail"] = "parse", str(e)
         r["error"] = f"公式已识别，但没法解析成算式（可点 WolframAlpha 复制过去算）：{e}"

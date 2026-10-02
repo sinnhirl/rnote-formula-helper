@@ -58,12 +58,16 @@ def parse_cases():
         "\\frac{1.25^{2}+1.75^{2}}{2} \\div 0.5",  # VL 风格：Unicode ÷
         "[\\frac{1}{2}x^{2}-2x]_{2}^{5}+[2x-\\frac{1}{2}x^{2}]_{0}^{2}",  # 求值括号 → 13/2
         "[2x-\\frac{1}{2}x^{2}]^{2}_{0}",          # 求值括号（上下限顺序颠倒）→ 2
+        ("[\\frac{1}{2}x^{2}-2x]\\frac{5}{2}+[2x-\\frac{1}{2}x^{2}]_{0}^{2}", {"fix_limits": True}),  # 上下限模式 → 13/2
+        ("[\\frac{1}{2}x^{2}-2x]\\frac{5}{2}+[2x-\\frac{1}{2}x^{2}] 0^{2}", {"fix_limits": True}),   # 叠写 ]0^{2} → 13/2
+        ("[2x-\\frac{1}{2}x^{2}] 0^{2}", {"fix_limits": True}),      # 叠写单独一段 → 2
     ]
     print("== 解析/计算层 ==")
-    for latex in cases:
+    for case in cases:
+        latex, kw = case if isinstance(case, tuple) else (case, {})
         try:
-            r = pipeline.compute(latex)
-            print(f"[calc] {latex!r} -> ok={r['ok']} main={r.get('main_text')!r} err={r.get('error')!r}")
+            r = pipeline.compute(latex, **kw)
+            print(f"[calc] {latex!r} {kw or ''}-> ok={r['ok']} main={r.get('main_text')!r} err={r.get('error')!r}")
             for (l, _lt, t) in r["results"]:
                 print(f"        - {l}: {t!r}")
         except Exception as e:

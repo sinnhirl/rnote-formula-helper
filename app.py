@@ -36,6 +36,7 @@ DEFAULT_CFG = {
     "snip_method": "builtin",
     "snip_timeout_s": 90,
     "auto_copy": True,
+    "stacked_as_limits": False,  # 弹窗「上下限」勾选框：把叠写数字（上5下2）按上下限求值（默认关=照常）
 }
 
 BG = "#20242e"
@@ -55,6 +56,7 @@ STRINGS = {
         "app_name": "Rnote 公式助手",
         "snip_hint": "拖动框选公式 · Esc / 右键 取消",
         "recognized_label": "识别到的公式",
+        "cb_limits": "「上5下2」这类叠写数字 → 按上下限求值",
         "btn_hotkeys": "快捷键",
         "btn_language": "language",
         "btn_edit": "编辑",
@@ -119,6 +121,7 @@ STRINGS = {
         "app_name": "Rnote Formula Helper",
         "snip_hint": "Drag to select the formula · Esc / right-click to cancel",
         "recognized_label": "Recognized formula",
+        "cb_limits": "Read stacked digits (top / bottom) as evaluation limits",
         "btn_hotkeys": "Hotkeys",
         "btn_language": "language",
         "btn_edit": "Edit",
@@ -701,7 +704,7 @@ class HelperApp:
         if not latex.strip():
             self.q.put(("error", t("err_no_formula")))
             return
-        res = pipeline.compute(latex)
+        res = pipeline.compute(latex, fix_limits=bool(self.cfg.get("stacked_as_limits")))
         self.q.put(("result", (img, latex, res)))
 
     def _quit(self):
@@ -751,6 +754,14 @@ class HelperApp:
                   bg=BTN_BG, fg=SUB, activebackground=BTN_ACTIVE,
                   activeforeground="#ffffff", relief="flat", padx=8, pady=0,
                   cursor="hand2", font=(FONT, 8)).pack(side="right", padx=(0, 6))
+
+        # 「上下限」勾选框（用户要求）：勾上把叠写数字按上下限求值，不勾照常；切换即重算
+        self._limits_var = tk.BooleanVar(value=bool(self.cfg.get("stacked_as_limits")))
+        tk.Checkbutton(frm, text=t("cb_limits"), variable=self._limits_var,
+                       command=self._on_limits_toggle, bg=BG, fg=SUB,
+                       activebackground=BG, activeforeground=FG, selectcolor=PANEL,
+                       relief="flat", bd=0, highlightthickness=0,
+                       cursor="hand2", font=(FONT, 9)).pack(anchor="w", pady=(4, 0))
 
         self._render_into(frm, latex, color="#d7dcea", size=20)
 
@@ -868,6 +879,24 @@ class HelperApp:
             self._main_text = tt
         self._flash(f"{disp} ✓")
 
+    def _on_limits_toggle(self):
+        """弹窗「上下限」勾选框：状态存进配置并立即用新解释重算当前公式。"""
+        v = bool(self._limits_var.get())
+        self.cfg["stacked_as_limits"] = v
+        try:
+            save_cfg(self.cfg)
+        except Exception:
+            log("保存 stacked_as_limits 失败（忽略）")
+        latex = self._cur_latex
+        if not latex:
+            return
+        try:
+            r = pipeline.compute(latex, fix_limits=v)
+        except Exception:
+            log("上下限模式重算失败:\n" + traceback.format_exc())
+            return
+        self._show_result(None, latex, r)
+
     def _open_formula_editor(self, initial=None):
         """手动输入/修改公式：改完重新解析计算，直接出结果。（识别有小错时用它修）"""
         if self._edit_win is not None and self._edit_win.winfo_exists():
@@ -906,7 +935,7 @@ class HelperApp:
                 err.configure(text=t("edit_empty"))
                 return
             try:
-                r = pipeline.compute(s)
+                r = pipeline.compute(s, fix_limits=bool(self.cfg.get("stacked_as_limits")))
             except Exception as e:
                 log("手动输入计算失败:\n" + traceback.format_exc())
                 r = {"ok": False, "expr": None, "sym": None, "main_latex": None,
