@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Rnote 公式助手 — 主程序
 默认热键：ctrl+alt+shift+m 截取公式识别 / ctrl+alt+shift+c 识别剪贴板图片 / ctrl+alt+shift+q 退出。
-弹窗右上角可现场修改快捷键、切换中/英文；也可直接编辑 config.json（hotkey / language 等）。
+弹窗右上角可现场修改快捷键、切换中/英文；弹窗里还能手动编辑/修正公式；也可直接编辑 config.json（hotkey / language 等）。
 """
 import ctypes
 import json
@@ -53,7 +53,12 @@ STRINGS = {
         "snip_hint": "拖动框选公式 · Esc / 右键 取消",
         "recognized_label": "识别到的公式",
         "btn_hotkeys": "快捷键",
-        "btn_language": "语言：中文",
+        "btn_language": "language",
+        "btn_edit": "编辑",
+        "edit_title": "编辑公式",
+        "edit_hint": "直接修改 LaTeX，或手输普通算式（例：2x+7=15），改完点「重新计算」。",
+        "edit_recalc": "重新计算",
+        "edit_empty": "还没输入公式",
         "btn_copy_main": "复制结果",
         "btn_copy_latex": "复制 LaTeX",
         "btn_retry": "重新框选",
@@ -80,6 +85,7 @@ STRINGS = {
         "already_running": "公式助手已经在运行了（看右下角托盘 fx 图标）。",
         "tray_snip": "识别公式 (截图)",
         "tray_clip": "识别剪贴板图片",
+        "tray_manual": "手动输入公式…",
         "tray_hotkeys": "快捷键设置…",
         "tray_language": "语言：切换中/英",
         "tray_quit": "退出",
@@ -89,6 +95,7 @@ STRINGS = {
         "hk_quit": "退出助手",
         "hk_change": "修改",
         "hk_press": "请按下新快捷键…（Esc 取消）",
+        "hk_mods_snip_only": "纯修饰键组合只能用于「框选识别」",
         "hk_save": "保存",
         "hk_cancel": "取消",
         "hk_reset": "恢复默认",
@@ -104,7 +111,12 @@ STRINGS = {
         "snip_hint": "Drag to select the formula · Esc / right-click to cancel",
         "recognized_label": "Recognized formula",
         "btn_hotkeys": "Hotkeys",
-        "btn_language": "Language: English",
+        "btn_language": "language",
+        "btn_edit": "Edit",
+        "edit_title": "Edit formula",
+        "edit_hint": "Fix the LaTeX, or type a plain formula (e.g. 2x+7=15), then click Recalculate.",
+        "edit_recalc": "Recalculate",
+        "edit_empty": "Nothing entered yet",
         "btn_copy_main": "Copy result",
         "btn_copy_latex": "Copy LaTeX",
         "btn_retry": "Reselect",
@@ -131,6 +143,7 @@ STRINGS = {
         "already_running": "The helper is already running (look for the fx tray icon).",
         "tray_snip": "Recognize formula (screen)",
         "tray_clip": "Recognize clipboard image",
+        "tray_manual": "Enter formula manually…",
         "tray_hotkeys": "Hotkey settings…",
         "tray_language": "Language: 中文 / English",
         "tray_quit": "Quit",
@@ -140,6 +153,7 @@ STRINGS = {
         "hk_quit": "Quit helper",
         "hk_change": "Change",
         "hk_press": "Press the new hotkey… (Esc to cancel)",
+        "hk_mods_snip_only": "A modifier-only combo can only be used for Screen selection",
         "hk_save": "Save",
         "hk_cancel": "Cancel",
         "hk_reset": "Reset defaults",
@@ -249,6 +263,12 @@ def _pretty_hotkey(combo: str) -> str:
         else:
             out.append(p.capitalize())
     return "+".join(out)
+
+
+def _is_mods_only(combo: str) -> bool:
+    """纯修饰键组合（如 ctrl+alt+shift）：按下即触发，没有普通键。"""
+    parts = [p for p in (combo or "").split("+") if p]
+    return bool(parts) and all(p in ("ctrl", "alt", "shift", "win") for p in parts)
 
 
 def _valid_key_name(name: str) -> bool:
@@ -405,6 +425,8 @@ class HelperApp:
         self._cur_latex = None
         self._cur_res = None
         self._main_text = None
+        self._snip_after_id = None
+        self._edit_win = None
         self.root = tk.Tk()
         self.root.withdraw()
         self._register_hotkeys()
@@ -477,10 +499,16 @@ class HelperApp:
                 msg = self.q.get_nowait()
                 kind = msg[0]
                 if kind == "snip":
-                    self._begin_snip()
+                    if _is_mods_only(self.cfg["hotkey"]):
+                        self._schedule_snip()   # 纯修饰键：延迟一步，紧跟其后的 C/Q 组合可把它取消
+                    else:
+                        self._begin_snip()
                 elif kind == "snipimg":
                     self._on_snip_image(msg[1])
+                elif kind == "manual":
+                    self._open_formula_editor(None)
                 elif kind == "clip":
+                    self._cancel_pending_snip()
                     self._start_worker(True)
                 elif kind == "result":
                     self._show_result(*msg[1])
@@ -491,11 +519,43 @@ class HelperApp:
                 elif kind == "toggle_lang":
                     self._on_toggle_language()
                 elif kind == "quit":
+                    self._cancel_pending_snip()
                     self._quit()
                     return
         except queue.Empty:
             pass
         self.root.after(80, self._poll_queue)
+
+    def _schedule_snip(self):
+        """纯修饰键组合：延迟 350ms 再弹框选，给 Ctrl+Alt+Shift+C / +Q 留出取消窗口。"""
+        if self._snip_after_id is not None:
+            return
+        self._snip_after_id = self.root.after(350, self._snip_now)
+
+    def _snip_now(self):
+        self._snip_after_id = None
+        # 延迟期间如果按了别的键（老的 M、或别家软件的组合键），说明用户想按的不是纯修饰键 —— 取消
+        try:
+            import keyboard
+            with keyboard._pressed_events_lock:
+                pressed = set(keyboard._pressed_events)
+            allowed = set()
+            for part in self.cfg["hotkey"].split("+"):
+                allowed.update(keyboard.key_to_scan_codes(part, False))
+            if pressed and not pressed <= allowed:
+                log("框选等待期间检测到其他按键，已取消")
+                return
+        except Exception:
+            pass
+        self._begin_snip()
+
+    def _cancel_pending_snip(self):
+        if self._snip_after_id is not None:
+            try:
+                self.root.after_cancel(self._snip_after_id)
+            except Exception:
+                pass
+            self._snip_after_id = None
 
     def _begin_snip(self):
         """截屏识别入口：默认内置框选；可在 config.json 换回系统截图工具。"""
@@ -661,6 +721,7 @@ class HelperApp:
 
         mkbtn(row1, t("btn_copy_main"), self._copy_main, True)
         mkbtn(row1, t("btn_copy_latex"), lambda: self._copy_text(latex))
+        mkbtn(row1, t("btn_edit"), lambda: self._open_formula_editor(self._cur_latex))
         mkbtn(row1, t("btn_retry"), lambda: self._retry(win))
         mkbtn(row1, t("btn_close"), win.destroy)
 
@@ -730,6 +791,80 @@ class HelperApp:
         if ok and tt:
             self._main_text = tt
         self._flash(f"{disp} ✓")
+
+    def _open_formula_editor(self, initial=None):
+        """手动输入/修改公式：改完重新解析计算，直接出结果。（识别有小错时用它修）"""
+        if self._edit_win is not None and self._edit_win.winfo_exists():
+            self._edit_win.lift()
+            self._edit_win.focus_force()
+            return
+        win = tk.Toplevel(self.root)
+        self._edit_win = win
+        win.title(t("edit_title"))
+        win.configure(bg=BG)
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        try:
+            win.iconbitmap(str(BASE / "icon.ico"))
+        except Exception:
+            pass
+        frm = tk.Frame(win, bg=BG, padx=16, pady=12)
+        frm.pack(fill="both", expand=True)
+        tk.Label(frm, text=t("edit_hint"), bg=BG, fg=SUB, font=(FONT, 9),
+                 wraplength=470, justify="left").pack(anchor="w")
+        entry = tk.Entry(frm, font=("Consolas", 12), width=56, bg=PANEL, fg=FG,
+                         insertbackground=FG, relief="flat")
+        entry.pack(fill="x", pady=(8, 0), ipady=4)
+        if initial:
+            entry.insert(0, initial)
+        err = tk.Label(frm, text="", bg=BG, fg="#ffb4a8", font=(FONT, 9))
+        err.pack(anchor="w")
+
+        def close_editor():
+            self._edit_win = None
+            win.destroy()
+
+        def recalc():
+            s = entry.get().strip()
+            if not s:
+                err.configure(text=t("edit_empty"))
+                return
+            try:
+                r = pipeline.compute(s)
+            except Exception as e:
+                log("手动输入计算失败:\n" + traceback.format_exc())
+                r = {"ok": False, "expr": None, "sym": None, "main_latex": None,
+                     "main_text": None, "results": [], "error": str(e),
+                     "error_kind": "compute", "error_detail": str(e)}
+            close_editor()
+            self._show_result(None, s, r)
+
+        brow = tk.Frame(frm, bg=BG)
+        brow.pack(fill="x", pady=(10, 0))
+
+        def mkbtn(text, cmd, accent=False):
+            b = tk.Button(brow, text=text, command=cmd,
+                          bg=(ACCENT_BG if accent else BTN_BG),
+                          fg=("#10141c" if accent else FG),
+                          activebackground=BTN_ACTIVE, activeforeground="#ffffff",
+                          relief="flat", padx=10, pady=3, cursor="hand2",
+                          font=(FONT, 10))
+            b.pack(side="left", padx=(0, 6))
+            return b
+
+        mkbtn(t("edit_recalc"), recalc, True)
+        mkbtn(t("hk_cancel"), close_editor)
+        entry.bind("<Return>", lambda e: recalc())
+        win.bind("<Escape>", lambda e: close_editor())
+        win.protocol("WM_DELETE_WINDOW", close_editor)
+
+        win.update_idletasks()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        win.geometry(f"+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
+        win.lift()
+        win.focus_force()
+        entry.focus_force()
 
     def _copy_text(self, text, quiet=False):
         try:
@@ -806,7 +941,7 @@ class HelperApp:
             "quit_hotkey": self.cfg["quit_hotkey"],
         }
         rows = [("hotkey", "hk_snip"), ("clipboard_hotkey", "hk_clip"), ("quit_hotkey", "hk_quit")]
-        state = {"which": None, "held": set()}
+        state = {"which": None, "held": set(), "mods": set()}
         displays = {}
 
         hint = tk.Label(frm, text="", bg=BG, fg=SUB, font=(FONT, 9))
@@ -819,16 +954,37 @@ class HelperApp:
         def end_capture():
             state["which"] = None
             state["held"] = set()
+            state["mods"] = set()
             self._capture_active = False
             hint.configure(text="")
 
         def start_capture(key):
             state["which"] = key
             state["held"] = set()
+            state["mods"] = set()
             self._capture_active = True
             err.configure(text="")
             hint.configure(text=t("hk_press"))
             win.focus_force()
+
+        def finish_capture(combo):
+            which = state["which"]
+            if "ctrl" not in combo and "alt" not in combo:
+                err.configure(text=t("hk_need_mod"))
+                end_capture()
+                return
+            if which != "hotkey" and _is_mods_only(combo):
+                err.configure(text=t("hk_mods_snip_only"))
+                end_capture()
+                return
+            if any(combo == v and k != which for k, v in values.items()):
+                err.configure(text=t("hk_dup"))
+                end_capture()
+                return
+            values[which] = combo
+            err.configure(text="")
+            end_capture()
+            refresh()
 
         def on_key_press(e):
             if state["which"] is None:
@@ -837,6 +993,7 @@ class HelperApp:
             mod = _MOD_KEYS.get(ks)
             if mod:
                 state["held"].add(mod)
+                state["mods"].add(mod)
                 tmp = _combo_from(state["held"], "")
                 hint.configure(text=(_pretty_hotkey(tmp) + "+…") if tmp else t("hk_press"))
                 return "break"
@@ -844,19 +1001,7 @@ class HelperApp:
                 err.configure(text=t("hk_bad_key"))
                 end_capture()
                 return "break"
-            combo = _combo_from(state["held"], ks)
-            if "ctrl" not in state["held"] and "alt" not in state["held"]:
-                err.configure(text=t("hk_need_mod"))
-                end_capture()
-                return "break"
-            if any(combo == v and k != state["which"] for k, v in values.items()):
-                err.configure(text=t("hk_dup"))
-                end_capture()
-                return "break"
-            values[state["which"]] = combo
-            err.configure(text="")
-            end_capture()
-            refresh()
+            finish_capture(_combo_from(state["held"], ks))
             return "break"
 
         def on_key_release(e):
@@ -865,6 +1010,8 @@ class HelperApp:
             mod = _MOD_KEYS.get(e.keysym)
             if mod:
                 state["held"].discard(mod)
+                if not state["held"] and len(state["mods"]) >= 2:
+                    finish_capture("+".join(m for m in _MOD_ORDER if m in state["mods"]))
 
         def on_escape(e):
             if state["which"] is not None:
@@ -958,6 +1105,7 @@ class HelperApp:
         return pystray.Menu(
             pystray.MenuItem(t("tray_snip"), lambda: self.q.put(("snip",))),
             pystray.MenuItem(t("tray_clip"), lambda: self.q.put(("clip",))),
+            pystray.MenuItem(t("tray_manual"), lambda: self.q.put(("manual",))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(t("tray_hotkeys"), lambda: self.q.put(("open_hk",))),
             pystray.MenuItem(t("tray_language"), lambda: self.q.put(("toggle_lang",))),

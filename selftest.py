@@ -51,6 +51,8 @@ def parse_cases():
         "\\begin{matrix} x^{2} \\\\ +2x+1 \\end{matrix}",
         "0 , 75 + 1",
         "0.5 \\times( 4 \\times6+0.75^{2}+0.25^{2}",
+        "0_{.}75 \\times 4",
+        "1.75^{2} }",
     ]
     print("== 解析/计算层 ==")
     for latex in cases:

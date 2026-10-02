@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """自动化测试：内置框选流程。
-显示测试公式图 → 触发 Ctrl+Alt+Shift+M → 检测遮罩窗口 → 模拟拖框 → 验证弹窗出现。"""
+显示测试公式图 → 按 config.json 里配置的框选热键触发 → 检测遮罩窗口 → 模拟拖框 → 验证弹窗出现。"""
 import ctypes
+import json
 import time
 from ctypes import wintypes
 
@@ -41,14 +42,22 @@ root.update()
 print(f"[viewer] image at ({left},{top}) size {iw}x{ih}")
 
 time.sleep(0.6)
-# 用慢速按键序列（之前验证过这种方式能触发全局热键；keyboard.send 整串组合不可靠）
-keyboard.press("ctrl"); time.sleep(0.08)
-keyboard.press("alt"); time.sleep(0.08)
-keyboard.press("shift"); time.sleep(0.08)
-keyboard.press("m"); time.sleep(0.3)
-keyboard.release("m")
-keyboard.release("shift"); keyboard.release("alt"); keyboard.release("ctrl")
-print("[step] hotkey ctrl+alt+shift+m sent")
+# 慢速模拟框选热键（读 config.json 的 hotkey；跨进程模拟才有效——同进程模拟会被 keyboard 库自己忽略）
+with open(r"C:\rnote-ocr\config.json", encoding="utf-8") as _f:
+    _hk = json.load(_f).get("hotkey", "ctrl+alt+shift+m")
+_parts = [p for p in _hk.split("+") if p]
+try:
+    for _k in _parts:
+        keyboard.press(_k)
+        time.sleep(0.1)
+    time.sleep(0.8)   # 纯修饰键版本要按住等遮罩（取消窗口 350ms）
+finally:
+    for _k in reversed(_parts):
+        try:
+            keyboard.release(_k)
+        except Exception:
+            pass
+print(f"[step] hotkey {_hk} sent")
 
 h = 0
 for _ in range(50):

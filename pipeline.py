@@ -114,6 +114,7 @@ def _normalize_ocr(s: str) -> str:
     s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)        # 1 2 -> 12
     s = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", s)  # 0. 5 / 0 .5 -> 0.5
     s = re.sub(r"(?<=\d)\s*,\s*(?=\d)", ".", s)   # 0 , 75 / 0,75 -> 0.75（逗号误识别成小数点）
+    s = re.sub(r"(?<=\d)\s*_\{[.,]\}\s*(?=\d)", ".", s)  # 0_{.}75 / 0_{,} 75 -> 0.75（小数点被识成下标）
     s = re.sub(r"(?<=\d)\s+(?=[a-zA-Z])", "", s)  # 2 x -> 2x
     s = re.sub(r"\s*/\s*", "/", s)                 # 1 / 2 -> 1/2
     return s.strip()
@@ -141,9 +142,30 @@ def _flatten_latex_envs(s: str) -> str:
     return s
 
 
+def _strip_stray_braces(s: str) -> str:
+    """清掉未配对的花括号：'...\\times4}' -> '...\\times4'；'x^{2' -> 'x^{2}'。
+    （多行 matrix 环境残留、模型乱吐的 '}' 曾导致解析直接失败，实测踩过。）"""
+    out, depth = [], 0
+    for ch in s:
+        if ch == "{":
+            depth += 1
+            out.append(ch)
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                out.append(ch)
+            # depth == 0 的 '}' 直接丢弃
+        else:
+            out.append(ch)
+    t = "".join(out)
+    if depth > 0:                       # 有没闭合的 '{'：末尾补上
+        t += "}" * depth
+    return t
+
+
 def _sanitize(s: str) -> str:
-    """OCR 入口统一清洗：拆平多行环境 + 空格规整（OCR 与解析两个入口都走这里，双保险）。"""
-    return _normalize_ocr(_flatten_latex_envs(s))
+    """OCR 入口统一清洗：拆平多行环境 + 清孤立括号 + 空格规整（OCR 与解析两个入口都走这里，双保险）。"""
+    return _normalize_ocr(_strip_stray_braces(_flatten_latex_envs(s)))
 
 
 def _balance_parens(s: str):

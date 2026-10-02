@@ -19,6 +19,7 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 - Popup extras: solve / derivative / integral / simplify / factor / expand / numeric value
 - **Adjustable hotkeys** — record new ones right in the popup; takes effect immediately, no restart
 - **UI language: 中文 / English** — one click in the popup switches the whole interface
+- **Fix and recalc** — if a character is misread, hit **Edit** in the popup (or tray → *Enter formula manually…*) to correct the formula and recompute on the spot
 - Two OCR engines with automatic fallback: `pix2text` (default, strong on handwriting) and `pix2tex`
 - Built-in in-memory region select — no screenshot files, no clipboard-history pollution
 
@@ -44,12 +45,13 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
    automatically if the primary engine fails. Common OCR quirks are cleaned
    up before parsing: multi-line formulas (an OCR-produced `matrix` block is
    flattened to one line), a missing closing parenthesis, `0 , 75` for
-   `0.75`, stray spaces inside numbers, and so on.
+   `0.75`, dotted subscripts (`0_{.}75`), stray braces left by flattened
+   formulas, stray spaces inside numbers, and so on.
 3. **Compute** — the LaTeX is parsed with `latex2sympy2` + SymPy: equations
    are solved, expressions are evaluated or simplified automatically.
 4. **Show** — a popup presents the recognized LaTeX, the result, and one-click
    operations: solve, derivative, integral, simplify, factor, expand, numeric
-   value. The top-right corner holds **Hotkeys** and **Language**. A
+   value. The top-right corner holds **Hotkeys** and **language**. A
    WolframAlpha link is offered when the parser cannot handle the input.
 
 ## Requirements
@@ -91,12 +93,19 @@ grabbed by NVIDIA GeForce Experience as its microphone toggle.)
 4. Need more? Use the popup buttons (solve, derivative, integral, simplify,
    factor, expand, numeric), or the WolframAlpha link as an escape hatch.
 
+**Fixing a misread** — recognition occasionally slips on tiny superscripts.
+Click **Edit** in the popup (or, with no popup open, tray → *Enter formula
+manually…*), correct the text (plain input like `2x+7=15` is fine), and click
+**Recalculate** — the result updates immediately.
+
 **Changing hotkeys** — in the popup, click **Hotkeys** (top-right), click
 *Change* on a row, press the new combination, then *Save*. It takes effect
 immediately and is written to `config.json`; *Reset defaults* restores the
-original three.
+original three. Modifier-only combos such as a bare `Ctrl+Alt+Shift` can be
+recorded too: they fire on release after a 350 ms grace window, so
+`Ctrl+Alt+Shift+C` / `+Q` keep working.
 
-**Changing language** — in the popup, click **Language** (top-right) to switch
+**Changing language** — in the popup, click **language** (top-right) to switch
 the whole interface — popup, settings dialog, tray menu, notifications —
 between 中文 and English.
 
@@ -146,6 +155,9 @@ immediately). Other keys take effect after a restart.
   system tray; it may be hiding in the overflow area). Logs: `rnote-ocr.log`.
 - **Selecting a blank/white region does nothing** — intentional: blank regions
   are skipped instead of being misrecognized.
+- **A character was misread (tiny superscripts are the usual suspects)** —
+  click **Edit** in the popup (or tray → *Enter formula manually…*) and
+  recalculate.
 - **Hotkey conflicts** — change the hotkey from the popup (takes effect at
   once) or in `config.json`. Known grabby apps include NVIDIA GeForce
   Experience (`Ctrl+Alt+M`).

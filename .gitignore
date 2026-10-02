@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .pid
 *.log
+
+# local scratch files (not for the public repo)
+_bench*
+_sendkey.py
