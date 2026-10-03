@@ -4,8 +4,14 @@
   "quit_hotkey": "ctrl+alt+shift+q",
   "language": "zh",
   "ocr_engine": "paddleocr-vl",
-  "vl_server_urls": ["http://127.0.0.1:8111", "http://127.0.0.1:8112"],
+  "vl_server_urls": [
+    "http://127.0.0.1:8111",
+    "http://127.0.0.1:8112"
+  ],
+  "vl_autostart": true,
+  "vl_stop_on_exit": true,
   "snip_method": "builtin",
   "snip_timeout_s": 90,
-  "auto_copy": true
+  "auto_copy": true,
+  "stacked_as_limits": false
 }

@@ -36,7 +36,7 @@ DEFAULT_CFG = {
     "snip_method": "builtin",
     "snip_timeout_s": 90,
     "auto_copy": True,
-    "stacked_as_limits": False,  # 弹窗「上下限」勾选框：把叠写数字（上5下2）按上下限求值（默认关=照常）
+    "stacked_as_limits": False,  # 弹窗「上下限」勾选框：把叠写数字按积分上下限代入求值（默认关=照常）
 }
 
 BG = "#20242e"
@@ -56,7 +56,7 @@ STRINGS = {
         "app_name": "Rnote 公式助手",
         "snip_hint": "拖动框选公式 · Esc / 右键 取消",
         "recognized_label": "识别到的公式",
-        "cb_limits": "「上5下2」这类叠写数字 → 按上下限求值",
+        "cb_limits": "叠写数字 → 按积分上下限代入求值",
         "btn_hotkeys": "快捷键",
         "btn_language": "language",
         "btn_edit": "编辑",
@@ -121,7 +121,7 @@ STRINGS = {
         "app_name": "Rnote Formula Helper",
         "snip_hint": "Drag to select the formula · Esc / right-click to cancel",
         "recognized_label": "Recognized formula",
-        "cb_limits": "Read stacked digits (top / bottom) as evaluation limits",
+        "cb_limits": "Stacked digits → evaluate by substituting the integration limits",
         "btn_hotkeys": "Hotkeys",
         "btn_language": "language",
         "btn_edit": "Edit",
