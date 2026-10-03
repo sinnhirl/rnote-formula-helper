@@ -267,7 +267,7 @@ def _subst_var(body: str, var: str, val: str) -> str:
     """把 body 里的变量换成分值；紧邻数字/括号处补 \\cdot 确保能解析。"""
     def _r(m):
         prev = m.string[m.start() - 1] if m.start() > 0 else ""
-        pre = "\\cdot " if (prev.isalnum() or prev in ")}]") else ""
+        pre = "\\cdot " if (m.start() > 0 and (prev.isalnum() or prev in ")}]")) else ""
         return pre + "(" + val + ")"
 
     return re.sub(r"(?<![\\A-Za-z])" + var + r"(?![A-Za-z])", _r, body)

@@ -95,17 +95,37 @@ def parse_cases():
         ("[\\frac{1}{2}x^{2}-2x]\\frac{5}{2}+[2x-\\frac{1}{2}x^{2}]_{0}^{2}", {"fix_limits": True}),  # 上下限模式 → 13/2
         ("[\\frac{1}{2}x^{2}-2x]\\frac{5}{2}+[2x-\\frac{1}{2}x^{2}] 0^{2}", {"fix_limits": True}),   # 叠写 ]0^{2} → 13/2
         ("[2x-\\frac{1}{2}x^{2}] 0^{2}", {"fix_limits": True}),      # 叠写单独一段 → 2
+        ("[x^{2}+5x]_{-4}^{2}", {}, "18"),   # 变量开头（修复前误补 \cdot 解析失败）→ 18
+        ("[x^{2}+5x]_{2}^{-4}", {}, "-18"),  # 变量开头 + 上下限反向 → -18
+        ("[x^{2}]_{0}^{3}", {}, "9"),        # 变量开头单项 → 9
+        ("[t^{2}+t]_{0}^{2}", {}, "6"),      # 变量开头、变量名 t → 6
     ]
     print("== 解析/计算层 ==")
+    calc_fails = []
     for case in cases:
-        latex, kw = case if isinstance(case, tuple) else (case, {})
+        if isinstance(case, tuple):
+            latex, kw = case[0], case[1]
+            expect = case[2] if len(case) > 2 else None
+        else:
+            latex, kw, expect = case, {}, None
         try:
             r = pipeline.compute(latex, **kw)
             print(f"[calc] {latex!r} {kw or ''}-> ok={r['ok']} main={r.get('main_text')!r} err={r.get('error')!r}")
             for (l, _lt, t) in r["results"]:
                 print(f"        - {l}: {t!r}")
+            if expect is not None:
+                got = r.get("main_text")
+                if got == expect:
+                    print(f"        [expect] ok -> {got}")
+                else:
+                    calc_fails.append(f"{latex}: expected {expect!r} got {got!r}")
         except Exception as e:
             print(f"[calc] {latex!r} -> EXC {e}")
+            if expect is not None:
+                calc_fails.append(f"{latex}: EXC {e}")
+    if calc_fails:
+        print(f"失败: {'; '.join(calc_fails)}")
+        sys.exit(1)
 
 
 def ocr_cases():
