@@ -3,7 +3,9 @@
 Handwrite a math formula **anywhere on your screen** — press a hotkey, drag a box
 around it, and a popup shows the **recognized LaTeX** plus the **computed result**.
 A local, app-agnostic take on Apple Freeform's "Math results", built for use
-alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
+alongside [Rnote](https://github.com/flxzt/rnote) but working over any app,
+plus charting: hit **Plot** to graph the recognized expression, or box a printed
+table and the helper charts its first two columns.
 
 `Ctrl+Alt+Shift+M` → drag-select → LaTeX + result (auto-copied to the clipboard)
 
@@ -24,6 +26,8 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 - **Fix and recalc** — if a character is misread, hit **Edit** in the popup (or tray → *Enter formula manually…*) to correct the formula and recompute on the spot
 - Three OCR engines with automatic fallback: `pix2text` (default, strong on handwriting), `pix2tex`, and an optional local **PaddleOCR-VL** server (strongest; ~0.3 s/formula on a GPU). Switch engines from the tray menu
 - Built-in in-memory region select — no screenshot files, no clipboard-history pollution
+- **Plotting** — when the result is a plottable single-variable expression (or `y=…`), open a graph from the popup; pure numbers or multiple variables disable the button
+- **Plot window** ("Rnote Plot") — one reusable window (reopens after close; stays out of the result popup's way): copy/save image, formula mode with x/y range inputs (empty = auto), table mode with auto/straight/curve connection, collapsible editable data, switch back to formula mode
 
 ## Examples
 
@@ -33,6 +37,8 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 | `4+4·(−0.5)²` | `5` |
 | `x^2-5x+6=0` | `x = 2` or `x = 3` |
 | `0.5·(4×6+0.75²+0.25²+…)` | `239/16` |
+| `x^2-5x+6` (expression) | Graph via **Plot** in the popup |
+| Printed/screenshot table (first two columns) | Chart opens automatically (no result popup) |
 
 ## How it works
 
@@ -57,6 +63,10 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
    operations: solve, derivative, integral, simplify, factor, expand, numeric
    value. The top-right corner holds **Hotkeys** and **language**. A
    WolframAlpha link is offered when the parser cannot handle the input.
+5. **Chart** — box a printed or screenshot table and the first two columns are
+   plotted immediately (no popup). Otherwise use **Plot** in the popup when the
+   expression is plottable, or **Plot as table** if a table was misread as a
+   formula.
 
 ## Requirements
 
@@ -65,6 +75,8 @@ alongside [Rnote](https://github.com/flxzt/rnote) but working over any app.
 - No GPU — CPU inference only
 - About 2 GB of disk for the environment (CPU PyTorch) plus the OCR models,
   which are downloaded and cached automatically on first use
+- Charting needs no extra packages — `matplotlib`, `numpy`, and `scipy` are
+  already pulled in with the existing dependencies
 
 ## Installation
 
@@ -95,7 +107,9 @@ grabbed by NVIDIA GeForce Experience as its microphone toggle.)
 3. The popup shows the recognized LaTeX and the computed result. The main
    result is already on your clipboard — paste it anywhere.
 4. Need more? Use the popup buttons (solve, derivative, integral, simplify,
-   factor, expand, numeric), or the WolframAlpha link as an escape hatch.
+   factor, expand, numeric), **Plot** (graph a plottable expression), or
+   **Plot as table** (force table recognition when OCR treated a table as
+   formula), or the WolframAlpha link as an escape hatch.
 
 **Fixing a misread** — recognition occasionally slips on tiny superscripts.
 Click **Edit** in the popup (or, with no popup open, tray → *Enter formula
@@ -117,6 +131,38 @@ Launching: double-click `start_silent.vbs` (no console window) or
 `start_debug.cmd` (keeps a console open for logs). Quit via the tray icon,
 `quit.cmd`, or the quit hotkey.
 
+## Charting
+
+Three ways in:
+
+1. **Plot** (popup row 1) — enabled when the recognized result is a plottable
+   single-variable expression (including `y=…` forms). Grayed out for plain
+   numbers or formulas with multiple variables. Opens the **Rnote Plot** window.
+2. **Box a printed/screenshot table** — the pipeline detects a table layout,
+   reads `(x, y)` from the first two columns, and opens the plot window
+   directly (no result popup).
+3. **Plot as table** (popup row 3) — fallback when a table was recognized as
+   a formula; forces table mode and charts the data.
+
+**Rnote Plot** window (single instance, reused; closing it does not block the
+result popup):
+
+- **Copy image** — paste into Word, Rnote, etc.
+- **Save image** — writes `plot_YYYYMMDD-HHMMSS.png` to your Desktop
+- **Formula mode** — x range and y range fields (leave blank for auto limits);
+  press Enter or click away to redraw
+- **Table mode** — connection style **auto** / **straight** / **curve** (last
+  choice remembered in `plot_connect`); expandable data panel; edit cells and
+  redraw; **Treat as formula** switches back to formula plotting
+
+Limits:
+
+- Tables must be **printed or screenshot** layouts — handwritten tables are not
+  supported
+- Only the **first two columns** of multi-column tables are used
+
+Headless check: `python selftest.py plot` (9 cases).
+
 ## Configuration
 
 Edit `config.json` — or, for hotkeys and language, use the popup (applies
@@ -135,6 +181,8 @@ immediately). Other keys take effect after a restart.
 | `snip_method` | `builtin` | `builtin` = in-memory overlay; `ms-screenclip` = system screenshot tool (auto-saves files) |
 | `snip_timeout_s` | `90` | Overlay auto-cancel timeout, seconds |
 | `auto_copy` | `true` | Copy the main result to the clipboard automatically |
+| `plot_connect` | `auto` | Table plot line style: `auto`, `straight`, or `curve` |
+| `plot_geom` | (auto) | Last plot window position and size (written automatically) |
 
 ## Optional: PaddleOCR-VL engine
 
@@ -157,8 +205,11 @@ no extra dependencies.
 - `app.py` — tray app: hotkeys, popup UI with hotkey/language settings, built-in snip overlay, single-instance guard
 - `pipeline.py` — preprocessing, OCR (pix2text / pix2tex / paddleocr-vl), parsing, computation, rendering
 - `vl_client.py` — direct client for the optional PaddleOCR-VL llama.cpp server (stdlib only)
-- `selftest.py` — headless self-test: `python selftest.py parse|ocr|all`
-- `config.json` — hotkeys, language, OCR engine, snip method
+- `table_reader.py` — table detection and `(x, y)` extraction for plotting
+- `plot_engine.py` — matplotlib rendering (lazy import)
+- `plot_window.py` — **Rnote Plot** UI window
+- `selftest.py` — headless self-test: `python selftest.py parse|ocr|plot|all`
+- `config.json` — hotkeys, language, OCR engine, snip method, plot options
 - `selftest_imgs/` — sample images used by the self-test
 - `start_silent.vbs` / `start_debug.cmd` / `quit.cmd` — launchers
 - `make_icon_and_shortcut.ps1` — regenerates `icon.ico` and the Desktop shortcut
@@ -169,7 +220,10 @@ no extra dependencies.
 - Recognition and computation are fully local; no network access is required
   (the only outbound link is the WolframAlpha button, opened by you on demand).
 - The captured image never touches the disk and is released right after OCR.
-- The clipboard only ever receives the resulting text.
+- Plot rendering is entirely local; an image file is written only when you click
+  **Save image** in the plot window (saved to the Desktop).
+- The clipboard only ever receives the resulting text (and plot **Copy image**
+  when you use it).
 
 ## Troubleshooting
 

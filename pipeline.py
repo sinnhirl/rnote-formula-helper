@@ -117,6 +117,41 @@ def warmup(engine: str | None = None):
         get_p2t_model()
 
 
+def looks_like_table(text: str) -> bool:
+    """判断 OCR 结果更像表格数值还是公式 LaTeX（保守：宁可漏判表格）。"""
+    s = (text or "").strip()
+    if not s:
+        return False
+    # LaTeX / 公式痕迹
+    if "\\" in s:
+        return False
+    if re.search(r"[\^_=]", s):
+        return False
+    if re.search(r"[√∫±×÷≤≥]", s):
+        return False
+    low = s.lower()
+    for fn in (
+        "sin", "cos", "tan", "log", "ln", "exp", "sqrt", "frac", "int", "lim",
+    ):
+        if re.search(rf"(?<![a-z]){fn}(?![a-z])", low):
+            return False
+    tokens = re.findall(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z]+|[^\s\w]+|\S+", s)
+    tokens = [t for t in tokens if t.strip()]
+    if not tokens:
+        return False
+    num_count = sum(
+        1 for t in tokens
+        if re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", t)
+    )
+    if num_count < 4:
+        return False
+    word_count = sum(1 for t in tokens if re.fullmatch(r"[A-Za-z]+", t))
+    denom = num_count + word_count
+    if denom == 0:
+        return False
+    return num_count / denom >= 0.5
+
+
 def clean_latex(s: str) -> str:
     s = (s or "").strip().strip("$").strip()
     for t in ("\\displaystyle", "\\!", "\\,", "\\;", "\\:", "~"):

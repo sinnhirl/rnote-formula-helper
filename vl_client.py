@@ -92,7 +92,8 @@ def _looks_degenerate(text: str) -> bool:
     return bool(grams) and grams.most_common(1)[0][1] >= 5
 
 
-def _request(api_base: str, img, timeout: float, repeat_penalty=None) -> str:
+def _request(api_base: str, img, timeout: float, repeat_penalty=None, prompt: str | None = None) -> str:
+    text_prompt = _PROMPT if prompt is None else prompt
     payload = {
         "model": _model_name(api_base),
         "messages": [{
@@ -100,7 +101,7 @@ def _request(api_base: str, img, timeout: float, repeat_penalty=None) -> str:
             "content": [
                 {"type": "image_url",
                  "image_url": {"url": "data:image/png;base64," + _b64_png(img)}},
-                {"type": "text", "text": _PROMPT},
+                {"type": "text", "text": text_prompt},
             ],
         }],
         "temperature": 0,
@@ -113,15 +114,16 @@ def _request(api_base: str, img, timeout: float, repeat_penalty=None) -> str:
     return (out["choices"][0]["message"]["content"] or "").strip()
 
 
-def recognize(img, servers=None, timeout: float = 120.0) -> str:
-    """识别一张 PIL 图片 → LaTeX 文本。服务不在线时抛 ServerUnavailable。"""
+def recognize(img, servers=None, timeout: float = 120.0, prompt=None) -> str:
+    """识别一张 PIL 图片 → LaTeX 文本。服务不在线时抛 ServerUnavailable。
+    prompt=None 时使用默认 \"OCR:\"；指定 prompt 则作为 VL 文本提示词。"""
     api_base = find_server(servers)
     if api_base is None:
         raise ServerUnavailable(
             "PaddleOCR-VL 服务不在线（8111/8112 无响应）：先运行 start_server.bat（GPU）"
             "或 start_server_cpu.bat（CPU）")
     try:
-        txt = _request(api_base, img, timeout)
+        txt = _request(api_base, img, timeout, prompt=prompt)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"PaddleOCR-VL 服务返回错误 HTTP {e.code}") from e
     except (urllib.error.URLError, TimeoutError) as e:
@@ -131,7 +133,7 @@ def recognize(img, servers=None, timeout: float = 120.0) -> str:
         return txt
     # 复读/空输出：加 repetition penalty 重试一次
     try:
-        txt2 = _request(api_base, img, timeout, repeat_penalty=1.10)
+        txt2 = _request(api_base, img, timeout, repeat_penalty=1.10, prompt=prompt)
     except Exception as e:
         raise RuntimeError(f"识别输出异常（{'复读' if txt else '空'}），重试失败: {e}") from e
     if not txt2 or _looks_degenerate(txt2):

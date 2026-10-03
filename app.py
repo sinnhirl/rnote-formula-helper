@@ -20,7 +20,11 @@ import tkinter as tk
 from PIL import Image, ImageDraw, ImageGrab, ImageTk
 
 import pipeline
+import plot_engine
+import plot_window
+import table_reader
 from pipeline import log
+from vl_client import ServerUnavailable
 
 BASE = Path(__file__).resolve().parent
 
@@ -37,6 +41,8 @@ DEFAULT_CFG = {
     "snip_timeout_s": 90,
     "auto_copy": True,
     "stacked_as_limits": False,  # 弹窗「上下限」勾选框：把叠写数字按积分上下限代入求值（默认关=照常）
+    "plot_geom": "",
+    "plot_connect": "auto",
 }
 
 BG = "#20242e"
@@ -116,6 +122,32 @@ STRINGS = {
         "hk_saved": "已保存，立即生效 ✓",
         "hk_save_fail": "保存失败：",
         "lang_switched": "已切换为中文",
+        "btn_plot": "画图",
+        "btn_as_table": "按表格出图",
+        "btn_as_formula": "按公式处理",
+        "plot_title": "Rnote 画图",
+        "btn_plot_copy": "复制图片",
+        "btn_plot_save": "保存图片",
+        "plot_mode_auto": "自动",
+        "plot_mode_straight": "直线",
+        "plot_mode_curve": "弧线",
+        "btn_edit_data": "编辑数据",
+        "plot_data_show": "数据 ▾",
+        "plot_data_hide": "数据 ▴",
+        "edit_data_title": "编辑数据",
+        "edit_data_hint": "每行一个点：\"x y\"（空格或逗号分隔），改完点「应用」",
+        "edit_data_apply": "应用",
+        "edit_data_bad": "没有解析到有效数据（至少 2 个点）",
+        "plot_x_label": "x 范围",
+        "plot_y_label": "y 范围",
+        "plot_range_ph": "留空=自动",
+        "plot_no_formula": "这条公式画不了图（没有实数定义域，或含多个变量）",
+        "plot_no_table": "没识别到足够的数据点（需要前两列为数字）",
+        "plot_need_vl": "表格识别需要 PaddleOCR-VL 服务（start_server.bat）",
+        "plot_saved": "已保存：{path}",
+        "plot_copied": "已复制图片 ✓",
+        "plot_copy_fail": "复制失败，可改用「保存图片」",
+        "plot_err": "画图失败：",
     },
     "en": {
         "app_name": "Rnote Formula Helper",
@@ -181,6 +213,32 @@ STRINGS = {
         "hk_saved": "Saved — active immediately ✓",
         "hk_save_fail": "Save failed: ",
         "lang_switched": "Switched to English",
+        "btn_plot": "Plot",
+        "btn_as_table": "Plot as table",
+        "btn_as_formula": "Treat as formula",
+        "plot_title": "Rnote Plot",
+        "btn_plot_copy": "Copy image",
+        "btn_plot_save": "Save image",
+        "plot_mode_auto": "Auto",
+        "plot_mode_straight": "Line",
+        "plot_mode_curve": "Curve",
+        "btn_edit_data": "Edit data",
+        "plot_data_show": "Data ▾",
+        "plot_data_hide": "Data ▴",
+        "edit_data_title": "Edit data",
+        "edit_data_hint": 'One point per line: "x y" (space or comma separated), then click Apply',
+        "edit_data_apply": "Apply",
+        "edit_data_bad": "No valid data (need at least 2 points)",
+        "plot_x_label": "x range",
+        "plot_y_label": "y range",
+        "plot_range_ph": "empty = auto",
+        "plot_no_formula": "Cannot plot this expression (no real domain, or multiple variables)",
+        "plot_no_table": "Not enough numeric pairs (first two columns must be numbers)",
+        "plot_need_vl": "Table recognition needs the PaddleOCR-VL service (start_server.bat)",
+        "plot_saved": "Saved: {path}",
+        "plot_copied": "Image copied ✓",
+        "plot_copy_fail": "Copy failed — use Save image instead",
+        "plot_err": "Plot failed:",
     },
 }
 
@@ -446,6 +504,8 @@ class HelperApp:
         self._snip_after_id = None
         self._edit_win = None
         self._vl_spawned = False
+        self.plot_win = None
+        self._last_img = None
         self.root = tk.Tk()
         self.root.withdraw()
         self._register_hotkeys()
@@ -579,6 +639,8 @@ class HelperApp:
                     self._start_worker(True)
                 elif kind == "result":
                     self._show_result(*msg[1])
+                elif kind == "table_plot":
+                    self._show_table_plot(*msg[1])
                 elif kind == "error":
                     self._show_error(msg[1])
                 elif kind == "open_hk":
@@ -698,12 +760,23 @@ class HelperApp:
             self.busy = False
 
     def _process(self, img):
+        self._last_img = img
         log(f"已截取 {img.size[0]}x{img.size[1]}")
         latex = pipeline.ocr_latex(img)
         log(f"识别结果: {latex}")
         if not latex.strip():
             self.q.put(("error", t("err_no_formula")))
             return
+        if pipeline.looks_like_table(latex):
+            try:
+                pts, raw = table_reader.table_from_image(
+                    img, servers=self.cfg.get("vl_server_urls")
+                )
+            except Exception:
+                pts = []
+            if len(pts) >= 2:
+                self.q.put(("table_plot", (img, latex, pts)))
+                return
         res = pipeline.compute(latex, fix_limits=bool(self.cfg.get("stacked_as_limits")))
         self.q.put(("result", (img, latex, res)))
 
@@ -722,6 +795,8 @@ class HelperApp:
 
     # ------------------------------------------------------------ 结果弹窗
     def _show_result(self, img, latex, r, autocopy=None):
+        if img is not None:
+            self._last_img = img
         if self.popup is not None and self.popup.winfo_exists():
             self.popup.destroy()
         win = tk.Toplevel(self.root)
@@ -795,6 +870,8 @@ class HelperApp:
         row1.pack(fill="x", pady=(10, 2))
         row2 = tk.Frame(frm, bg=BG)
         row2.pack(fill="x", pady=(2, 0))
+        row3 = tk.Frame(frm, bg=BG)
+        row3.pack(fill="x", pady=(2, 0))
 
         def mkbtn(parent, text, cmd, accent=False):
             b = tk.Button(parent, text=text, command=cmd,
@@ -809,8 +886,13 @@ class HelperApp:
         mkbtn(row1, t("btn_copy_main"), self._copy_main, True)
         mkbtn(row1, t("btn_copy_latex"), lambda: self._copy_text(latex))
         mkbtn(row1, t("btn_edit"), lambda: self._open_formula_editor(self._cur_latex))
+        btn_plot = mkbtn(row1, t("btn_plot"), self._on_plot_click)
+        if not self._plottable(r):
+            btn_plot.configure(state="disabled", fg=SUB)
         mkbtn(row1, t("btn_retry"), lambda: self._retry(win))
         mkbtn(row1, t("btn_close"), win.destroy)
+
+        mkbtn(row3, t("btn_as_table"), self._as_table_click)
 
         for op, key in [("solve", "op_solve"), ("diff", "op_diff"), ("integrate", "op_integrate"),
                         ("simplify", "op_simplify"), ("factor", "op_factor"),
@@ -1008,6 +1090,127 @@ class HelperApp:
     def _show_error(self, msg):
         self._toast(msg, bg="#4a2530", fg="#ffcfc8")
 
+    def _plottable(self, r) -> bool:
+        import sympy as sp
+
+        if not r.get("ok"):
+            return False
+        expr = r.get("expr")
+        if expr is None or isinstance(expr, list):
+            return False
+        if isinstance(expr, sp.Eq):
+            lhs, rhs = expr.lhs, expr.rhs
+            if lhs.is_Symbol and lhs.name == "y" and len(rhs.free_symbols) <= 1:
+                return True
+            if rhs.is_Symbol and rhs.name == "y" and len(lhs.free_symbols) <= 1:
+                return True
+            return False
+        return len(expr.free_symbols) == 1
+
+    def _plot_expr_sym(self, r):
+        import sympy as sp
+
+        expr = r["expr"]
+        if isinstance(expr, sp.Eq):
+            if expr.lhs.is_Symbol and expr.lhs.name == "y":
+                plot_expr = expr.rhs
+            else:
+                plot_expr = expr.lhs
+        else:
+            plot_expr = expr
+        sym = r.get("sym")
+        if sym is None:
+            syms = sorted(
+                plot_expr.free_symbols, key=lambda s: (s.name != "x", s.name)
+            )
+            sym = syms[0] if syms else None
+        return plot_expr, sym
+
+    def _open_plot(self):
+        if self.plot_win is None or not self.plot_win.is_alive():
+            self.plot_win = plot_window.PlotWindow(
+                self.root,
+                self.cfg,
+                save_cfg,
+                t,
+                on_as_formula=self._plot_as_formula,
+            )
+        return self.plot_win
+
+    def _on_plot_click(self):
+        r = self._cur_res
+        if not r or not self._plottable(r):
+            return
+        plot_expr, sym = self._plot_expr_sym(r)
+        try:
+            self._open_plot().update_formula(
+                plot_expr, sym, latex=self._cur_latex
+            )
+        except plot_engine.PlotError as e:
+            self._show_error(t("plot_err") + str(e))
+
+    def _as_table_click(self):
+        if self.busy:
+            return
+        img = self._last_img
+        if img is None:
+            self._show_error(t("plot_no_table"))
+            return
+        self.busy = True
+
+        def worker():
+            try:
+                pts, raw = table_reader.table_from_image(
+                    img, servers=self.cfg.get("vl_server_urls")
+                )
+                if len(pts) < 2:
+                    self.q.put(("error", t("plot_no_table")))
+                else:
+                    self.q.put(
+                        ("table_plot", (img, self._cur_latex or "", pts))
+                    )
+            except ServerUnavailable:
+                self.q.put(("error", t("plot_need_vl")))
+            except Exception as e:
+                log("按表格出图失败:\n" + traceback.format_exc())
+                self.q.put(("error", t("plot_err") + str(e)))
+            finally:
+                self.busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_table_plot(self, img, latex, pts):
+        self._last_img = img
+        try:
+            self._open_plot().update_table(pts, latex=latex)
+        except plot_engine.PlotError as e:
+            self._show_error(t("plot_err") + str(e))
+
+    def _plot_as_formula(self):
+        img = self._last_img
+        if img is None or self.plot_win is None:
+            return
+        latex = self.plot_win.last_latex
+        if not latex:
+            return
+        if self.busy:
+            return
+        self.busy = True
+
+        def worker():
+            try:
+                res = pipeline.compute(
+                    latex, fix_limits=bool(self.cfg.get("stacked_as_limits"))
+                )
+                self.q.put(("result", (img, latex, res)))
+            except Exception:
+                log("按公式处理失败:\n" + traceback.format_exc())
+                self.q.put(("error", t("err_see_log")))
+            finally:
+                self.busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # ------------------------------------------------------------ 语言 / 设置
     def _on_toggle_language(self):
         new = "en" if lang() == "zh" else "zh"
@@ -1019,6 +1222,8 @@ class HelperApp:
             self._hk_win.destroy()          # 语言变了，设置窗下次重开
         if self.popup is not None and self.popup.winfo_exists():
             self._show_result(None, self._cur_latex, self._cur_res, autocopy=False)
+        if self.plot_win is not None and self.plot_win.is_alive():
+            self.plot_win.refresh_language()
         self._toast(t("lang_switched"), ms=1800)
 
     def _set_engine(self, eng):

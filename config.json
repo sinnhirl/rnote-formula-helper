@@ -13,5 +13,7 @@
   "snip_method": "builtin",
   "snip_timeout_s": 90,
   "auto_copy": true,
-  "stacked_as_limits": false
+  "stacked_as_limits": false,
+  "plot_geom": "1110x877+1280+362",
+  "plot_connect": "auto"
 }
